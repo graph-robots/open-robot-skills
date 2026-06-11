@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+outputs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+MUJOCO_LOG.TXT
+
+# Checkout-local LLM response cache (perceiving-objects script default)
+.llm_cache/

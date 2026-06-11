@@ -1,0 +1,38 @@
+{
+  "name": "open-robot-skills",
+  "owner": {
+    "name": "graph-as-policy authors",
+    "url": "https://github.com/graph-as-policy"
+  },
+  "metadata": {
+    "description": "Skill and tool bundles for gap (graph as policy): robot manipulation strategies and model-backed tools in the Agent Skills format.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "open-robot-skills",
+      "source": "./",
+      "description": "Robot skill bundles for the gap engine — perception, grasping, transport, tracking, and policy-steering strategies (skills/) plus model-backed tool bundles (tools/: SAM3, Grounding DINO, Gemini-ER, Molmo, generic VLM, CuRobo planning, pure-math geometry). Each bundle is an Agent Skills directory; Python deps install via one pip extra per bundle.",
+      "version": "0.1.0",
+      "skills": [
+        "./skills/grasping-direct-ik",
+        "./skills/grasping-short-axis",
+        "./skills/grasping-with-planner",
+        "./skills/perceiving-object-parts",
+        "./skills/perceiving-objects",
+        "./skills/perceiving-objects-multiview",
+        "./skills/perceiving-objects-oneshot",
+        "./skills/running-policies",
+        "./skills/tracking-objects",
+        "./skills/transporting-objects",
+        "./tools/curobo",
+        "./tools/gemini-er",
+        "./tools/geometry",
+        "./tools/grounding-dino",
+        "./tools/molmo",
+        "./tools/sam3",
+        "./tools/vlm"
+      ]
+    }
+  ]
+}

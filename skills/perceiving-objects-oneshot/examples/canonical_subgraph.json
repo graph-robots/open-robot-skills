@@ -1,0 +1,38 @@
+{
+  "skill": "perceiving-objects-oneshot",
+  "inputs": {},
+  "nodes": {
+    "observe": {
+      "type": "tool",
+      "tool": "robot.get_observation"
+    },
+    "perceive": {
+      "type": "script",
+      "script": "scripts/perceive_simple.py",
+      "inputs": {
+        "cameras": {"$ref": "observe.cameras"},
+        "object_name": "any grocery item on the floor"
+      }
+    },
+    "filter_obb": {
+      "type": "tool",
+      "tool": "geometry.filter_and_compute_obb",
+      "inputs": {"points": {"$ref": "perceive.cloud"}}
+    },
+    "found": {"type": "noop"}
+  },
+  "edges": [
+    ["START", "observe"],
+    ["observe", "perceive"],
+    ["perceive", "filter_obb"],
+    ["filter_obb", "found"],
+    ["found", "END"]
+  ],
+  "outputs": {
+    "target_obb": {"$ref": "filter_obb.obb"},
+    "target_mask": {"$ref": "perceive.mask"},
+    "target_cloud": {"$ref": "perceive.cloud"}
+  },
+  "exit": {"router_field": null, "success_values": ["found"]},
+  "on_error": "not_found"
+}

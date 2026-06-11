@@ -1,0 +1,36 @@
+{
+  "skill": "perceiving-object-parts",
+  "inputs": {},
+  "nodes": {
+    "observe": {
+      "type": "tool",
+      "tool": "robot.get_observation"
+    },
+    "perceive_handle": {
+      "type": "script",
+      "script": "scripts/perceive_subpart.py",
+      "inputs": {
+        "cameras": {"$ref": "observe.cameras"},
+        "parent_prompt": "frying pan",
+        "subpart_prompt": "long horizontal handle of the frying pan",
+        "padding_px": 30
+      }
+    },
+    "found": {"type": "noop"}
+  },
+  "edges": [
+    ["START", "observe"],
+    ["observe", "perceive_handle"],
+    ["perceive_handle", "found"],
+    ["found", "END"]
+  ],
+  "outputs": {
+    "target_obb": {"$ref": "perceive_handle.obb"},
+    "target_mask": {"$ref": "perceive_handle.mask"},
+    "target_cloud": {"$ref": "perceive_handle.cloud"},
+    "target_parent_obb": {"$ref": "perceive_handle.parent_obb"},
+    "target_parent_cloud": {"$ref": "perceive_handle.parent_cloud"}
+  },
+  "exit": {"router_field": null, "success_values": ["found"]},
+  "on_error": "not_found"
+}

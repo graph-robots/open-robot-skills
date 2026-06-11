@@ -1,0 +1,161 @@
+[project]
+name = "open-robot-skills"
+version = "0.1.0.dev0"
+description = "Skill and tool bundles for gap (graph as policy) — Anthropic Agent Skills format, discovered by path."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "graph-as-policy authors" }]
+
+# The distribution itself is nearly empty: bundles are discovered from this
+# checkout by path (gap --skills <path> / GAP_SKILLS_PATH). The pyproject
+# exists for ONE reason — the dependency mechanism: each bundle declares its
+# deps as an extra (extra name == bundle name), so `pip` owns code installs
+# and one resolver run surfaces cross-bundle conflicts. `gap skills check`
+# only verifies; `--download` prefetches weights only.
+dependencies = [
+  "graph-as-policy",   # one-way runtime dep: ctx, gap.types, gap.errors, load_prompt
+]
+
+[project.optional-dependencies]
+# ---- tool bundles (model-named) -------------------------------------------
+sam3 = [
+  "torch>=2.7",
+  "torchvision",
+  # transformers removed: the extracted servicer never imports it — the model
+  # comes from the upstream `sam3` package (import name `sam3`, matching the
+  # git pin and the vendored facebookresearch/sam3 submodule @ main):
+  # `sam3.model_builder.build_sam3_image_model` / `build_sam3_video_predictor`
+  # + `sam3.model.sam3_image_processor.Sam3Processor`. The video tracker
+  # JIT-compiles Triton NMS kernels at runtime and needs a working C compiler
+  # on `CC` — see tools/sam3/SKILL.md.
+  # Pinned to b26a5f3 = the dev-vendored SHA (757bbb0) + exactly one upstream
+  # commit ("Include entire sam3 package", #327): a packaging-only fix. The
+  # dev SHA's wheel ships just ["sam3", "sam3.model"], so a non-editable
+  # install breaks at import (`No module named 'sam3.sam'`) and the BPE vocab
+  # asset is missing; b26a5f3 fixes both with zero model-code changes.
+  # NOTE: sam3's metadata pins numpy==1.26. Under plain pip the resolver may
+  # downgrade numpy to satisfy it; the uv.lock here instead relaxes the pin
+  # via [tool.uv] override-dependencies (sam3 runs fine on numpy 2.x — the
+  # live-measured quickstart environment did).
+  "sam3 @ git+https://github.com/facebookresearch/sam3.git@b26a5f330e05d321afb39d01d3d4881f258f65ff",
+  # sam3.model_builder transitively imports sam3.train.data at module scope,
+  # which needs decord + pycocotools that upstream forgot to declare (made
+  # lazy only later, upstream 86ed770). decord2 is the maintained decord
+  # fork with cp311+ wheels — it provides `import decord` (same choice as
+  # the dev machine: decord2 + pycocotools were installed there).
+  "decord2",
+  "pycocotools",
+]
+grounding-dino = [
+  "torch>=2.7",
+  "transformers>=4.41",
+]
+gemini-er = [
+  "google-genai>=1.0,<1.60",
+]
+molmo = []          # remote vLLM endpoint; no local deps
+vlm = []            # gap core already ships anthropic + httpx
+curobo = [
+  # CUDA-JIT build: install with --no-build-isolation and CUDA_HOME set.
+  # Pinned to NVlabs' 'cuRoboV2 research release' — the exact SHA the dev
+  # refactor branches vendored and _curobo_impl.py targets (newer NVlabs
+  # main removed PoseCostMetric and stopped shipping robot content).
+  "nvidia-curobo @ git+https://github.com/NVlabs/curobo.git@4ea77366ca48ee453e7df139e39fa6532af49f3b",
+  # cuRoboV2's MotionPlanner imports `cuda.core` (lives in the cuda-core
+  # wheel, not declared by curobo's metadata) — declare it explicitly.
+  "cuda-core[cu12]>=0.7",
+  # _curobo_impl.py imports these directly (torch tensors for goal poses,
+  # trimesh for debug-mesh export); declare them explicitly rather than
+  # leaning on curobo's transitive pins.
+  "torch>=2.7",
+  "trimesh",
+]
+geometry = [
+  "open3d>=0.18",
+  # DBSCAN noise filtering (filter_noise / filter_and_compute_obb /
+  # build_world_config) — the servicer imported sklearn.cluster.DBSCAN.
+  "scikit-learn>=1.3",
+  # cv2 (OBB contour fitting) comes from gap core's opencv-python-headless.
+]
+# ---- skills with extra deps ------------------------------------------------
+running-policies = [
+  "openpi-client @ git+https://github.com/Physical-Intelligence/openpi.git#subdirectory=packages/openpi-client",
+]
+# ---- skills with no direct deps ---------------------------------------------
+# Every bundle declares an extra (extra name == bundle name) so `gap skills
+# check` can map bundle -> install line. These skills carry no dependencies of
+# their own: their model deps come from the tool bundles they call through
+# `gap.allowed_tools` (e.g. grasping-with-planner plans via the [curobo]
+# extra's tools; the perceiving-* skills call the [quickstart] stack).
+perceiving-objects = []
+perceiving-objects-oneshot = []
+perceiving-objects-multiview = []
+perceiving-object-parts = []
+grasping-with-planner = []
+grasping-direct-ik = []
+grasping-short-axis = []
+transporting-objects = []
+tracking-objects = []
+# ---- meta-extras ------------------------------------------------------------
+quickstart = ["open-robot-skills[sam3,grounding-dino,geometry]"]
+grocery = ["open-robot-skills[quickstart,curobo]"]          # the G1 acceptance set
+all = ["open-robot-skills[quickstart,curobo,gemini-er,running-policies]"]
+
+[dependency-groups]
+# Installed by default with `uv sync` (pip users: `pip install --group dev`).
+dev = ["pytest>=8", "ruff>=0.5"]
+
+# uv resolves the gap engine from the documented side-by-side checkout
+# (pip users install it explicitly: `pip install -e ../graph-as-policy`).
+[tool.uv.sources]
+graph-as-policy = { path = "../graph-as-policy", editable = true }
+
+[tool.uv]
+# sam3's published metadata pins `numpy==1.26` exactly, which is unsolvable
+# next to decord2 (>=1.26.4) in one strict resolution. The pin is
+# over-strict — the live-measured quickstart environment runs sam3 against
+# numpy 2.x — so relax it for the lock. pip users are unaffected (pip does
+# not co-resolve the full extra set the way `uv lock` does).
+override-dependencies = ["numpy>=1.26"]
+
+# CuRobo compiles CUDA extensions at install time against the environment's
+# torch: build it unisolated (CUDA_HOME must point at a toolkit matching
+# torch's CUDA when syncing --extra curobo/grocery/all).
+no-build-isolation-package = ["nvidia-curobo"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# No python package ships — the wheel is a metadata carrier for the extras;
+# bundles are read from the checkout by path.
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Verbatim port of the dev tree's curobo wrapper: the warp compat shim must
+# run before the curobo imports (E402), the availability-probe imports are
+# intentionally unused (F401), and the remaining style debt (unused locals,
+# percent-format, zip-strict) is kept as-ported to ease diffing against the
+# source tree.
+"tools/curobo/_curobo_impl.py" = ["E402", "F401", "F841", "UP031", "B905"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not gpu and not llm'"
+markers = [
+  "gpu: needs model weights + an NVIDIA GPU",
+  "llm: needs a live LLM API key",
+]
