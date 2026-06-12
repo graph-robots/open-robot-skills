@@ -49,6 +49,24 @@ class DetectResult(TypedDict):
     detections: list[Detection]
 
 
+def weights_cached() -> bool | None:
+    """Filesystem-only weight-cache probe for ``gap check``.
+
+    Checks the Hugging Face cache for the configured model's config.json
+    (the canonical presence marker) — never downloads, never imports
+    torch. ``None`` when huggingface_hub is unavailable ("unknown").
+    """
+    try:
+        from huggingface_hub import try_to_load_from_cache
+    except ImportError:
+        return None
+    try:
+        result = try_to_load_from_cache(_MODEL_NAME, "config.json")
+    except Exception:
+        return None
+    return isinstance(result, str)
+
+
 def _get_model() -> tuple[Any, Any]:
     """Load the Grounding DINO model + processor once (lazy singleton)."""
     global _model, _processor

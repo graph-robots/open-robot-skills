@@ -8,6 +8,7 @@ license: MIT
 compatibility: requires gap>=0.1
 metadata: {category: perception, tags: [perception, segmentation, tracking, gpu]}
 gap:
+  requires: {gpu: true, weights: true}
   tools:
     - sam3.segment_text: Segment all instances matching a text description (masks, scores, boxes best-first).
     - sam3.segment_point: Segment the object at a pixel coordinate (multimask, best-first).

@@ -9,6 +9,7 @@ license: MIT
 compatibility: requires gap>=0.1
 metadata: {category: perception, tags: [perception, pointing, molmo, vllm]}
 gap:
+  requires: {env: [GAP_MOLMO_BASE_URL]}
   tools:
     - molmo.point_prompt: Point at a named object in an image; returns pixel coordinates.
     - molmo.query: Free-form visual question answering via Molmo.

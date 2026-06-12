@@ -11,6 +11,7 @@ description: Run a learned VLA policy in closed loop until a termination
 compatibility: requires gap>=0.1
 metadata: {category: policy, tags: [policy, vla, long-running, class-based]}
 gap:
+  requires: {}
   allowed_tools:
     - sim.apply_policy_action
     - vlm.query_yes_no

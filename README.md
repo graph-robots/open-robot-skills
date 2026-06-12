@@ -120,14 +120,28 @@ environment's torch. pip works too: `pip install -e ../graph-as-policy -e ".[<ex
 uv run gap skills check             # per-bundle PASS/WARN/FAIL; non-zero exit on FAIL
 uv run gap skills check --download  # + prefetch model weights (HF_TOKEN for gated repos)
 uv run gap skills table             # the catalog above (--format markdown|json)
+uv run gap check                    # capability report: which bundles can run HERE
+uv run gap tools list               # the flat tool catalog with live schemas
 ```
 
-`check` runs the engine-side format validation (frontmatter shape per
-bundle kind, referenced resource paths, `allowed_tools` resolution,
-declared type names, one extra per bundle) plus an import probe that maps
-missing dependencies to their install line — the same install-verification
-step the gap quickstart runs. Missing weights are a WARN, not a FAIL —
-nothing installs behind your back.
+`gap skills check` runs the engine-side format validation (frontmatter
+shape per bundle kind, referenced resource paths, `allowed_tools`
+resolution, declared type names, one extra per bundle) plus an import
+probe that maps missing dependencies to their install line — the same
+install-verification step the gap quickstart runs. Missing weights are a
+WARN, not a FAIL — nothing installs behind your back.
+
+`gap check` answers the operational question instead: per bundle, are the
+deps importable, the declared `gap.requires:` met (GPU, env vars), the
+weights cached — and which skills are therefore runnable right now, with
+a fix hint per failure.
+
+This repo is one **skill registry** — the canonical example. gap merges
+any number of them by precedence (your lab's fork can shadow individual
+bundles here): `gap registry init` scaffolds a new one, `gap registry add
+<name> <path>` layers it on top, `gap registry list` shows the active
+set. See the engine's
+[docs/skills.md](https://github.com/graph-robots/graph-as-policy/blob/main/docs/skills.md).
 
 ## Contributing a bundle
 
@@ -137,24 +151,33 @@ nothing installs behind your back.
 uv run gap skills new my-skill --kind skill    # or --kind tool
 ```
 
-That creates the layout (`SKILL.md` + `scripts/` or `tools.py`); then:
+That creates the layout (`SKILL.md` + `scripts/` or `tools.py`) **and a
+unit-test skeleton** (`tests/test_my_skill.py`); then:
 
 1. **Write the `SKILL.md`.** Spec frontmatter (`name` == dirname,
    third-person `description` ending in a "Use when…" sentence — it is the
    coordinator's entire view of your bundle), gap extensions under the
    `gap:` key (`allowed_tools`, `exit_conditions`, `canonical_scripts`, …).
-2. **Declare dependencies once** — add one extra named after your bundle in
+2. **Declare operational requirements** — a `gap.requires:` block
+   (`{gpu: true, env: [MY_API_KEY], env_any: [...], weights: true}`;
+   `requires: {}` when it needs nothing — mandatory for tool bundles, the
+   test suite enforces it). `gap check` derives runnability from this.
+   Bundles that download weights may add a filesystem-only
+   `weights_cached() -> bool | None` next to `prefetch()` in `tools.py`.
+3. **Declare dependencies once** — add one extra named after your bundle in
    `pyproject.toml` (empty list if it has none) and run `uv lock`.
-3. **Lazy-load models.** Importing your `tools.py` must not import
+4. **Lazy-load models.** Importing your `tools.py` must not import
    torch/transformers; load weights on first call (the test suite enforces
    this).
-4. **Test it CPU-only** with `gap.testing` (`FakeContext`,
-   `make_test_observation`) — `uv run pytest tests -q` must stay green
-   without a GPU; model-touching smokes go behind the `gpu` marker.
-5. **Check yourself before the PR:**
+5. **Test it CPU-only** with `gap.testing` (`FakeContext`,
+   `make_test_observation`) — flesh out the scaffolded test;
+   `uv run gap skills test my-skill` (or plain `uv run pytest tests -q`)
+   must stay green without a GPU; model-touching smokes go behind the
+   `gpu` marker.
+6. **Check yourself before the PR:**
 
    ```bash
-   uv run gap skills check && uv run pytest tests -q
+   uv run gap skills check && uv run gap skills test my-skill && uv run pytest tests -q
    ```
 
 The full authoring guide — bundle anatomy, the skill-facing `ctx` API,
@@ -167,6 +190,16 @@ exit-condition design, streaming skills — is in
 every bundle, so this checkout doubles as a Claude Code plugin marketplace:
 the same `SKILL.md` files that drive gap's graph generation are loadable as
 agent skills.
+
+To drive **gap itself** from Claude Code — search these registries, check
+capabilities, run/generate graphs, author new tested bundles — install the
+engine's agent skill from the gap repo (it also re-exports this registry's
+bundles, so one marketplace covers both):
+
+```bash
+claude plugin marketplace add graph-robots/graph-as-policy
+claude plugin install gap@gap
+```
 
 ## License
 
