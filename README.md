@@ -22,6 +22,11 @@ Clone this repo **next to the graph-as-policy checkout** (or set `GAP_SKILLS_PAT
 every gap command — `gap run`, `gap generate`, `gap benchmark` — discovers
 it automatically; no flags, no registration.
 
+New to gap? Start with the CPU-only
+[hello_graph example](https://github.com/graph-robots/graph-as-policy/tree/main/examples/hello_graph)
+and the [15-minute tour](https://github.com/graph-robots/graph-as-policy/blob/main/docs/quickstart.md),
+then come back here when you want to add a capability.
+
 ## Contents
 
 - [Skills — what the robot can do](#skills--what-the-robot-can-do)
@@ -90,6 +95,9 @@ uv sync --extra all          # everything
 uv run gap skills check --download    # verify bundles + prefetch model weights
 ```
 
+The curated sets are documented in the
+[gap README's environment table](https://github.com/graph-robots/graph-as-policy#pick-your-environment).
+
 Working on this repo standalone, sync it directly (the engine resolves from
 the sibling `../graph-as-policy` checkout):
 
@@ -117,8 +125,9 @@ uv run gap skills table             # the catalog above (--format markdown|json)
 `check` runs the engine-side format validation (frontmatter shape per
 bundle kind, referenced resource paths, `allowed_tools` resolution,
 declared type names, one extra per bundle) plus an import probe that maps
-missing dependencies to their install line. Missing weights are a WARN,
-not a FAIL — nothing installs behind your back.
+missing dependencies to their install line — the same install-verification
+step the gap quickstart runs. Missing weights are a WARN, not a FAIL —
+nothing installs behind your back.
 
 ## Contributing a bundle
 
