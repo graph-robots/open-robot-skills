@@ -47,8 +47,8 @@ from typing import TypedDict
 
 import httpx
 import numpy as np
-from gap.errors import ToolError
-from gap.tools import tool
+from gap_core.errors import ToolError
+from gap_core.tools import tool
 from PIL import Image
 
 logger = logging.getLogger(__name__)

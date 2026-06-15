@@ -27,9 +27,9 @@ from types import SimpleNamespace
 from typing import Any, TypedDict
 
 import numpy as np
-from gap.errors import PlanningFailed, ToolError
-from gap.tools import tool
-from gap.types import (
+from gap_core.errors import PlanningFailed, ToolError
+from gap_core.tools import tool
+from gap_core.types import (
     JointState,
     Quaternion,
     Se3Pose,

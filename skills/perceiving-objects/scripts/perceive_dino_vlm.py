@@ -37,7 +37,7 @@ from typing import Any, TypedDict
 import numpy as np
 from gap import NodeContext
 from gap.skills import load_prompt
-from gap.types import BoundingBox2D, CameraFrame, Mask, PointCloud, pose_to_matrix
+from gap_core.types import BoundingBox2D, CameraFrame, Mask, PointCloud, pose_to_matrix
 
 logger = logging.getLogger(__name__)
 

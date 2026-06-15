@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 from gap.skills import load_skills
-from gap.tools import ToolRegistry
-from gap.tools._registry import _PENDING_TOOLS
+from gap_core.tools import ToolRegistry
+from gap_core.tools._registry import _PENDING_TOOLS
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -142,7 +142,7 @@ def test_tools_dispatchable_through_registry(loaded):
     # proves the adapter wiring without any network.
     import os
 
-    from gap.errors import ToolError
+    from gap_core.errors import ToolError
     saved = os.environ.pop("GAP_MOLMO_BASE_URL", None)
     try:
         import numpy as np

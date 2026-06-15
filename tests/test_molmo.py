@@ -15,7 +15,7 @@ from pathlib import Path
 import httpx
 import numpy as np
 import pytest
-from gap.errors import ToolError
+from gap_core.errors import ToolError
 from gap.skills import load_skills
 from PIL import Image
 

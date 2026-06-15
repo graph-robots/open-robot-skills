@@ -8,7 +8,7 @@ from typing import Any, TypedDict
 
 import numpy as np
 from gap import NodeContext
-from gap.types import BoundingBox2D, CameraFrame, Mask, PointCloud
+from gap_core.types import BoundingBox2D, CameraFrame, Mask, PointCloud
 
 logger = logging.getLogger(__name__)
 

@@ -22,7 +22,7 @@ from typing import TypedDict
 
 import numpy as np
 from gap import NodeContext
-from gap.types import OrientedBoundingBox, Se3Pose
+from gap_core.types import OrientedBoundingBox, Se3Pose
 from scipy.spatial.transform import Rotation
 
 logger = logging.getLogger(__name__)

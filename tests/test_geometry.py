@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from gap.errors import PerceptionFailed
+from gap_core.errors import PerceptionFailed
 from gap.testing import make_test_observation
 
 # A denser image than the (120, 160) default so back-projected point spacing

@@ -12,8 +12,8 @@ import logging
 from typing import TypedDict
 
 from gap import NodeContext
-from gap.errors import PerceptionFailed
-from gap.types import CameraFrame, Mask, OrientedBoundingBox, PointCloud
+from gap_core.errors import PerceptionFailed
+from gap_core.types import CameraFrame, Mask, OrientedBoundingBox, PointCloud
 
 logger = logging.getLogger(__name__)
 

@@ -46,7 +46,7 @@ Inputs:
 from typing import TypedDict
 
 from gap import NodeContext
-from gap.types import Quaternion, Se3Pose, Vec3
+from gap_core.types import Quaternion, Se3Pose, Vec3
 
 
 class Output(TypedDict):

@@ -14,8 +14,8 @@ import logging
 import math
 
 import numpy as np
-from gap.errors import PerceptionFailed, PlanningFailed, ToolError
-from gap.types import (
+from gap_core.errors import PerceptionFailed, PlanningFailed, ToolError
+from gap_core.types import (
     CameraFrame,
     OrientedBoundingBox,
     Se3Pose,

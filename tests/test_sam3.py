@@ -62,7 +62,7 @@ def test_tracker_schemas(tool_registry):
 def test_invalid_image_shape_rejected_before_model_load(tool_registry, skills_registry):
     """The RGB shape check fires in _to_pil — but only after the model
     singleton loads, so exercise the helper directly (no GPU needed)."""
-    from gap.errors import ToolError
+    from gap_core.errors import ToolError
 
     mod = skills_registry.get("sam3").tools_module
     with pytest.raises(ToolError):

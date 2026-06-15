@@ -25,7 +25,7 @@ OBB remains available elsewhere (top_down_grasp_candidates, etc.).
 from typing import TypedDict
 
 from gap import NodeContext
-from gap.types import Mask, Observation, OrientedBoundingBox, WorldConfig
+from gap_core.types import Mask, Observation, OrientedBoundingBox, WorldConfig
 
 
 class Output(TypedDict):

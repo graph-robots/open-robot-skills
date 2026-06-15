@@ -57,7 +57,7 @@ from typing import Any, TypedDict
 import numpy as np
 from gap import NodeContext
 from gap.skills import load_prompt
-from gap.types import Mask, OrientedBoundingBox
+from gap_core.types import Mask, OrientedBoundingBox
 
 logger = logging.getLogger(__name__)
 

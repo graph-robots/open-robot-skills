@@ -1,4 +1,4 @@
-"""FakeContext-driven tests for the six manipulation skill bundles.
+"""FakeContext-driven tests for the manipulation skill + policy bundles.
 
 Each bundle's canonical scripts (or class-based callable) run against
 :class:`gap.testing.FakeContext` with canned tool responses — no robot, no
@@ -18,19 +18,22 @@ GPU, no LLM. The assertions pin the behaviors the source bundles tuned:
 - tracking-objects: tracker_init exactly once per session (statefulness
   across run() visits), per-tick ctx.publish snapshots, tracker_close in
   the finally;
-- running-policies: run_policy_loop wiring through a stub PolicyExecutor
-  (no websocket), gripper-cycle and VLM termination knobs.
+- pi05-libero / molmoact-libero: PolicyLoopSkill wiring through a stub
+  PolicyExecutor (no websocket), each using its own preset; gripper-cycle
+  and VLM termination knobs. These are kind="policy" bundles (under
+  policies/), not kind="skill".
 
-Loader-level checks: all six bundles discover as skill-kind, declared
-allowed_tools stay within the known tool catalog (connector names ∪ bundle
-registrations), and the two callable bundles register their @tool entries.
+Loader-level checks: skill bundles discover as kind="skill", policy
+bundles as kind="policy"; declared allowed_tools stay within the known
+tool catalog (connector names ∪ bundle registrations); the callable
+bundles (tracking + both policies) register their @tool entries.
 """
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
-from gap.errors import PlanningFailed
+from gap_core.errors import PlanningFailed
 from gap.testing import FakeContext
 from scipy.spatial.transform import Rotation
 
@@ -40,7 +43,11 @@ MANIPULATION_BUNDLES = (
     "grasping-short-axis",
     "transporting-objects",
     "tracking-objects",
-    "running-policies",
+)
+
+POLICY_BUNDLES = (
+    "pi05-libero",
+    "molmoact-libero",
 )
 
 # Connector tool names come from gap.skills.validate.connector_tool_names
@@ -111,28 +118,40 @@ def _script(skills_registry, bundle, name):
 # ---------------------------------------------------------------------------
 
 
-def test_all_six_manipulation_bundles_discover(skills_registry):
-    names = {info.name for info in skills_registry.list_skills(kind="skill")}
-    assert set(MANIPULATION_BUNDLES) <= names
+def test_all_manipulation_bundles_discover(skills_registry):
+    skill_names = {info.name for info in skills_registry.list_skills(kind="skill")}
+    assert set(MANIPULATION_BUNDLES) <= skill_names
     for bundle in MANIPULATION_BUNDLES:
         info = skills_registry.get(bundle)
         assert info.kind == "skill"
         assert info.namespace == "skills"
         assert info.meta.description
 
+    policy_names = {info.name for info in skills_registry.list_skills(kind="policy")}
+    assert set(POLICY_BUNDLES) <= policy_names
+    for bundle in POLICY_BUNDLES:
+        info = skills_registry.get(bundle)
+        assert info.kind == "policy"
+        assert info.namespace == "policies"
+        assert info.meta.description
+        assert info.meta.serving is not None, (
+            f"{bundle}: policy bundle has no gap.serving: block"
+        )
+
 
 def test_allowed_tools_are_known_names(skills_registry):
     from gap.skills.validate import known_tool_names
 
     known = known_tool_names([info.meta for info in skills_registry.list_skills()])
-    for bundle in MANIPULATION_BUNDLES:
+    for bundle in (*MANIPULATION_BUNDLES, *POLICY_BUNDLES):
         info = skills_registry.get(bundle)
         unknown = set(info.meta.allowed_tools) - known
         assert not unknown, f"{bundle}: unknown allowed_tools {sorted(unknown)}"
 
 
 def test_canonical_scripts_have_schemas(skills_registry):
-    for bundle in MANIPULATION_BUNDLES[:4]:  # the script-shipping bundles
+    # Script-shipping bundles: the four grasping/transporting ones.
+    for bundle in MANIPULATION_BUNDLES[:4]:
         info = skills_registry.get(bundle)
         assert info.canonical_scripts, f"{bundle}: no canonical scripts"
         for name, script in info.canonical_scripts.items():
@@ -141,14 +160,15 @@ def test_canonical_scripts_have_schemas(skills_registry):
 
 def test_callable_bundles_register_tools(skills_registry, tool_registry):
     assert "tracking-objects.track" in tool_registry
-    assert "running-policies.run" in tool_registry
-    for bundle in ("tracking-objects", "running-policies"):
+    assert "pi05-libero.run" in tool_registry
+    assert "molmoact-libero.run" in tool_registry
+    for bundle in ("tracking-objects", "pi05-libero", "molmoact-libero"):
         info = skills_registry.get(bundle)
         assert info.skill_class is not None, f"{bundle}: no Skill class wired"
         assert info.tools_module is not None
         assert set(info.meta.tools), f"{bundle}: SKILL.md declares no gap.tools"
     assert skills_registry.get("tracking-objects").meta.streaming is True
-    assert skills_registry.get("running-policies").meta.streaming is False
+    assert skills_registry.get("pi05-libero").meta.streaming is False
 
 
 # ---------------------------------------------------------------------------
@@ -743,7 +763,7 @@ class TestTrackingObjects:
 
 
 # ---------------------------------------------------------------------------
-# running-policies
+# pi05-libero / molmoact-libero (policy skills)
 # ---------------------------------------------------------------------------
 
 
@@ -777,16 +797,15 @@ def _policy_ctx(extra=None):
     return FakeContext(responses)
 
 
-class TestRunningPolicies:
-    def _run(self, skills_registry, ctx, client, **kwargs):
-        info = skills_registry.get("running-policies")
+class TestPolicySkills:
+    def _run(self, skills_registry, ctx, client, *, bundle="pi05-libero", **kwargs):
+        info = skills_registry.get(bundle)
         skill = info.skill_class()
         executor = _StubPolicyExecutor(client)
         ctx.policy_executor = executor
         stream = _StubStream(_observation())
         defaults = dict(
             observation_stream=stream,
-            policy_id="pi05",
             prompt="pick up the cream cheese",
             settle_steps=0,
         )
@@ -802,8 +821,9 @@ class TestRunningPolicies:
             skills_registry, ctx, client, max_windows=2, replan_every=2,
         )
         assert out == {"status": "max_windows", "num_windows": 2, "num_steps": 4}
-        # One client resolution through the executor's cache.
-        assert executor.requested == ["pi05"]
+        # One client resolution through the executor's cache, keyed by the
+        # bundle's own preset (the skill owns its model — no policy_id).
+        assert executor.requested == ["pi05-libero"]
         # One stream read + one inference per window.
         assert stream.reads == 2
         assert len(client.infer_calls) == 2
@@ -875,7 +895,7 @@ class TestRunningPolicies:
         assert vlm["prompt"] == "is the object in the basket?"
 
     def test_missing_policy_executor_raises(self, skills_registry):
-        info = skills_registry.get("running-policies")
+        info = skills_registry.get("pi05-libero")
         skill = info.skill_class()
         ctx = _policy_ctx()
         ctx.policy_executor = None
@@ -883,7 +903,6 @@ class TestRunningPolicies:
             skill.run(
                 ctx,
                 observation_stream=_StubStream(_observation()),
-                policy_id="pi05",
                 prompt="pick",
             )
 
@@ -893,10 +912,22 @@ class TestRunningPolicies:
         ctx = _policy_ctx()
         ctx.policy_executor = _StubPolicyExecutor(client)
         out = tool_registry.invoke(
-            "running-policies.run", ctx=ctx,
+            "pi05-libero.run", ctx=ctx,
             observation_stream=_StubStream(_observation()),
-            policy_id="pi05", prompt="pick", settle_steps=0,
+            prompt="pick", settle_steps=0,
             max_windows=1, replan_every=1,
         )
         assert out["status"] == "max_windows"
         assert out["num_steps"] == 1
+
+    def test_molmoact_uses_its_own_preset(self, skills_registry):
+        chunk = np.zeros((1, 7), dtype=np.float64)
+        client = _StubClient([chunk])
+        ctx = _policy_ctx()
+        _, executor, _ = self._run(
+            skills_registry, ctx, client, bundle="molmoact-libero",
+            max_windows=1, replan_every=1,
+        )
+        # Each policy skill resolves the client cache by its own preset
+        # (bundle name), proving the model identity is per-skill.
+        assert executor.requested == ["molmoact-libero"]

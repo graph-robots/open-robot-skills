@@ -1,0 +1,31 @@
+[project]
+name = "grounding-dino-tool-bundle"
+version = "0.1.0.dev0"
+description = "Grounding-DINO zero-shot detection. Runs out-of-process via gap_core.rpc.server (needs GPU)."
+readme = "SKILL.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+dependencies = [
+  "graph-as-policy-core",
+  # Model weights load via transformers; torch backs the inference path.
+  "torch>=2.7",
+  "transformers>=4.41",
+  "pillow>=10",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+# Dev-only source override: until graph-as-policy-core is published to PyPI,
+# bundles in the side-by-side open-robot-skills checkout resolve it from the
+# gap workspace's gap-core/ subdir. Drop this block once gap-core is on PyPI.
+[tool.uv.sources]
+graph-as-policy-core = { path = "../../../graph-as-policy/gap-core", editable = true }

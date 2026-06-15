@@ -1,0 +1,45 @@
+[project]
+name = "curobo-tool-bundle"
+version = "0.1.0.dev0"
+description = "NVIDIA cuRobo collision-aware motion planning. Runs out-of-process via gap_core.rpc.server (needs GPU + CUDA toolkit matching torch's CUDA)."
+readme = "SKILL.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+dependencies = [
+  "graph-as-policy-core",
+  # CUDA-JIT build: install with --no-build-isolation and CUDA_HOME set.
+  # Pinned to NVlabs' cuRoboV2 research release — the exact SHA the
+  # _curobo_impl.py port targets (newer NVlabs main removed PoseCostMetric
+  # and stopped shipping robot content).
+  "nvidia-curobo @ git+https://github.com/NVlabs/curobo.git@4ea77366ca48ee453e7df139e39fa6532af49f3b",
+  # cuRoboV2's MotionPlanner imports cuda.core (lives in the cuda-core
+  # wheel, not declared by curobo's metadata).
+  "cuda-core[cu12]>=0.7",
+  # _curobo_impl.py imports torch (goal-pose tensors) and trimesh (debug
+  # mesh export) directly.
+  "torch>=2.7",
+  "trimesh",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+# cuRobo compiles CUDA extensions at install time against the environment's
+# torch — build it unisolated. CUDA_HOME must point at a toolkit matching
+# torch's CUDA version when `gap skills install curobo` runs.
+[tool.uv]
+no-build-isolation-package = ["nvidia-curobo"]
+
+# Dev-only source override: until graph-as-policy-core is published to PyPI,
+# bundles in the side-by-side open-robot-skills checkout resolve it from the
+# gap workspace's gap-core/ subdir. Drop this block once gap-core is on PyPI.
+[tool.uv.sources]
+graph-as-policy-core = { path = "../../../graph-as-policy/gap-core", editable = true }

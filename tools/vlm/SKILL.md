@@ -10,6 +10,9 @@ compatibility: requires gap>=0.1
 metadata: {category: perception, tags: [perception, vlm, api]}
 gap:
   requires: {env_any: [ANTHROPIC_API_KEY, GAP_VLM_BASE_URL, GAP_VLM_PROJECT_ID]}
+  serving:
+    command: ["python", "-m", "gap_core.rpc.server", "--bundle", "vlm"]
+    protocol: stdio-msgpack
   tools:
     - vlm.query: Free-form visual question answering via a hosted VLM.
     - vlm.query_yes_no: Yes/no visual question answering; coerces the model reply to a bool.

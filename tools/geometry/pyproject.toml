@@ -1,0 +1,39 @@
+[project]
+name = "geometry-tool-bundle"
+version = "0.1.0.dev0"
+description = "Pure-math 3D geometry tools (point-cloud, OBB, grasp poses) for gap. Runs out-of-process via gap_core.rpc.server."
+readme = "SKILL.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+dependencies = [
+  # Tool-server entry point + @tool decorator + types/errors.
+  "graph-as-policy-core",
+  # CPU geometry stack: open3d for point-cloud math + alpha-shape meshing.
+  "open3d>=0.18",
+  # DBSCAN noise filtering (filter_noise / filter_and_compute_obb /
+  # build_world_config) — the servicer imports sklearn.cluster.DBSCAN.
+  "scikit-learn>=1.3",
+  # cv2 (OBB contour fitting) — declared explicitly so this bundle is
+  # self-contained even when gap-runtime isn't installed in the venv.
+  "opencv-python-headless>=4.9",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# No code ships in the wheel — the bundle is invoked by path (cwd) via
+# `uv run --project tools/geometry -- python -m gap_core.rpc.server …`,
+# which imports the in-place `tools.py` directly.
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+# Dev-only source override: until graph-as-policy-core is published to PyPI,
+# bundles in the side-by-side open-robot-skills checkout resolve it from the
+# gap workspace's gap-core/ subdir. Drop this block once gap-core is on PyPI.
+[tool.uv.sources]
+graph-as-policy-core = { path = "../../../graph-as-policy/gap-core", editable = true }

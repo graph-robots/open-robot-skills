@@ -8,7 +8,7 @@ from typing import Any, TypedDict
 
 import numpy as np
 from gap import NodeContext
-from gap.types import Mask
+from gap_core.types import Mask
 
 logger = logging.getLogger(__name__)
 

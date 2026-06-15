@@ -9,6 +9,10 @@ compatibility: requires gap>=0.1
 metadata: {category: perception, tags: [perception, detection, gpu]}
 gap:
   requires: {gpu: true, weights: true}
+  serving:
+    command: ["python", "-m", "gap_core.rpc.server", "--bundle", "grounding-dino"]
+    protocol: stdio-msgpack
+    requires_gpu: true
   tools:
     - grounding-dino.detect: Zero-shot detection from a text prompt (labeled boxes + scores).
 ---

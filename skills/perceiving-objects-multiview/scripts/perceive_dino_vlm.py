@@ -23,7 +23,7 @@ from typing import Any, TypedDict
 import numpy as np
 from gap import NodeContext
 from gap.skills import load_prompt
-from gap.types import CameraFrame, Mask, PointCloud
+from gap_core.types import CameraFrame, Mask, PointCloud
 
 logger = logging.getLogger(__name__)
 

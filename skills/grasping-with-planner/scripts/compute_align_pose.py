@@ -9,7 +9,7 @@ straight-line descent — no rotation blending, no twist-while-closing.
 from typing import TypedDict
 
 from gap import NodeContext
-from gap.types import OrientedBoundingBox, Se3Pose
+from gap_core.types import OrientedBoundingBox, Se3Pose
 
 _OBB_TOP_CLEARANCE = 0.15  # meters above the OBB top face
 

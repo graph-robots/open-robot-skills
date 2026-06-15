@@ -1,0 +1,52 @@
+[project]
+name = "sam3-tool-bundle"
+version = "0.1.0.dev0"
+description = "SAM 3 segmentation + video tracker tools. Runs out-of-process via gap_core.rpc.server (needs GPU; CUDA-JIT'd Triton NMS kernels)."
+readme = "SKILL.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+dependencies = [
+  "graph-as-policy-core",
+  "torch>=2.7",
+  "torchvision",
+  # Pinned to b26a5f3 = the dev-vendored SHA + one upstream packaging-only
+  # fix (#327, "Include entire sam3 package"). The dev SHA's wheel ships
+  # only ["sam3", "sam3.model"], so a non-editable install breaks at
+  # import (`No module named 'sam3.sam'`) and the BPE vocab asset is
+  # missing; b26a5f3 fixes both with zero model-code changes.
+  "sam3 @ git+https://github.com/facebookresearch/sam3.git@b26a5f330e05d321afb39d01d3d4881f258f65ff",
+  # sam3.model_builder transitively imports sam3.train.data at module
+  # scope, which needs decord + pycocotools that upstream forgot to
+  # declare. decord2 is the maintained decord fork with cp311+ wheels.
+  "decord2",
+  "pycocotools",
+  "pillow>=10",
+  # sam3/sam/rope.py imports einops at module scope (rearrange, repeat);
+  # sam3/model/sam3_video_predictor.py imports psutil at module scope; both
+  # are runtime deps the upstream sam3 wheel forgets to declare.
+  "einops>=0.7",
+  "psutil>=5.9",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+# sam3's published metadata pins numpy==1.26 exactly, which is unsolvable
+# alongside decord2 (numpy>=1.26.4). Mirror open-robot-skills's own override
+# so this bundle's .venv installs cleanly under uv.
+[tool.uv]
+override-dependencies = ["numpy>=1.26"]
+
+# Dev-only source override: until graph-as-policy-core is published to PyPI,
+# bundles in the side-by-side open-robot-skills checkout resolve it from the
+# gap workspace's gap-core/ subdir. Drop this block once gap-core is on PyPI.
+[tool.uv.sources]
+graph-as-policy-core = { path = "../../../graph-as-policy/gap-core", editable = true }

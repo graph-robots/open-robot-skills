@@ -11,7 +11,7 @@ When a ``target_obb`` is supplied, the lift target is derived from the OBB top
 from typing import TypedDict
 
 from gap import NodeContext
-from gap.types import OrientedBoundingBox, Quaternion, Se3Pose
+from gap_core.types import OrientedBoundingBox, Quaternion, Se3Pose
 
 # Margins used when target_obb is provided. Kept inside the skill so a single
 # file owns them; callers don't need to reason about safe heights.

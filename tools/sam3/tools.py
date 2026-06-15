@@ -26,9 +26,9 @@ from dataclasses import dataclass, field
 from typing import Any, TypedDict
 
 import numpy as np
-from gap.errors import PerceptionFailed, ToolError
-from gap.tools import tool
-from gap.types import BoundingBox2D, Mask
+from gap_core.errors import PerceptionFailed, ToolError
+from gap_core.tools import tool
+from gap_core.types import BoundingBox2D, Mask
 
 logger = logging.getLogger(__name__)
 

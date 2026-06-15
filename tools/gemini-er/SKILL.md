@@ -9,6 +9,9 @@ compatibility: requires gap>=0.1
 metadata: {category: perception, tags: [perception, detection, gemini, api]}
 gap:
   requires: {env_any: [GOOGLE_API_KEY, GEMINI_API_KEY]}
+  serving:
+    command: ["python", "-m", "gap_core.rpc.server", "--bundle", "gemini-er"]
+    protocol: stdio-msgpack
   tools:
     - gemini-er.detect: Detect pixel-space 2D bounding boxes for a text query via Gemini Robotics-ER.
 ---

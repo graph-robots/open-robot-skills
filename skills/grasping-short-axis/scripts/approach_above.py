@@ -23,8 +23,8 @@ the OBB top so no magic number needs to appear in the workflow JSON.
 from typing import TypedDict
 
 from gap import NodeContext
-from gap.errors import PlanningFailed
-from gap.types import OrientedBoundingBox, Quaternion, Se3Pose, Vec3
+from gap_core.errors import PlanningFailed
+from gap_core.types import OrientedBoundingBox, Quaternion, Se3Pose, Vec3
 
 # Clearance above the OBB top when deriving approach height from a target OBB.
 _OBB_APPROACH_CLEARANCE = 0.15

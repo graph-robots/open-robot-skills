@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from gap.errors import ToolError
+from gap_core.errors import ToolError
 from gap.skills import load_skills
 
 ROOT = Path(__file__).resolve().parents[1]

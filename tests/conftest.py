@@ -27,7 +27,7 @@ def skills_registry():
 @pytest.fixture(scope="session")
 def tool_registry(skills_registry):
     """ToolRegistry with the bundles' pending @tool registrations drained."""
-    from gap.tools import ToolRegistry
+    from gap_core.tools import ToolRegistry
 
     reg = ToolRegistry()
     reg.discover_pending()

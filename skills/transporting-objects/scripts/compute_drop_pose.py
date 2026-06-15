@@ -14,7 +14,7 @@ wrist YAW is preserved (see ``_yaw_only_topdown``).
 from typing import TypedDict
 
 from gap import NodeContext
-from gap.types import OrientedBoundingBox, Quaternion, Se3Pose, Vec3
+from gap_core.types import OrientedBoundingBox, Quaternion, Se3Pose, Vec3
 
 
 class Output(TypedDict):

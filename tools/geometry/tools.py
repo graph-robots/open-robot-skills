@@ -16,8 +16,8 @@ import math
 from typing import TypedDict
 
 import numpy as np
-from gap.tools import tool
-from gap.types import (
+from gap_core.tools import tool
+from gap_core.types import (
     CameraFrame,
     GraspCandidates,
     JointState,

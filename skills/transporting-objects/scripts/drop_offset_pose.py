@@ -47,7 +47,7 @@ from typing import TypedDict
 
 import numpy as np
 from gap import NodeContext
-from gap.types import OrientedBoundingBox, Se3Pose, Vec3
+from gap_core.types import OrientedBoundingBox, Se3Pose, Vec3
 from scipy.spatial.transform import Rotation as _R
 
 

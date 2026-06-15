@@ -20,7 +20,7 @@ runs ``robot.execute_trajectory`` with a subsampled trajectory.
 from typing import TypedDict
 
 from gap import NodeContext
-from gap.types import Trajectory
+from gap_core.types import Trajectory
 
 
 class Output(TypedDict):

@@ -1,0 +1,39 @@
+[project]
+name = "pi05-libero-policy-bundle"
+version = "0.1.0.dev0"
+description = "openpi π0.5 LIBERO checkpoint server (vendored serve_policy.py) for the pi05-libero gap policy bundle."
+readme = "SKILL.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+# Bundle-owned deps: gap's launcher runs `uv run --project policies/pi05-libero --`
+# so this venv carries the full openpi stack (JAX, model code, websocket server)
+# without leaking it into gap's own venv. The thin client side (openpi-client,
+# used by gap.runtime.policy via PolicyExecutor) is gap-side, not here.
+dependencies = [
+  # openpi ships the server (`openpi.serving.websocket_policy_server`),
+  # the policy loader (`openpi.policies.policy_config`), and the training
+  # config (`openpi.training.config`) that `server.py` imports verbatim.
+  # Pin to a fork-friendly SHA; bump when a new pi0/pi05 family checkpoint
+  # needs newer server code.
+  "openpi @ git+https://github.com/Physical-Intelligence/openpi.git",
+  "tyro>=0.9.5",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# The wheel carries no code — server.py is invoked directly via
+# `python server.py` (with cwd=bundle_dir, set by gap's PolicyManager).
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+# Dev-only source override: until graph-as-policy-core is published to PyPI,
+# bundles in the side-by-side open-robot-skills checkout resolve it from the
+# gap workspace's gap-core/ subdir. Drop this block once gap-core is on PyPI.
+[tool.uv.sources]
+graph-as-policy-core = { path = "../../../graph-as-policy/gap-core", editable = true }

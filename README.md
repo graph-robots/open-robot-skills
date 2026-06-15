@@ -48,11 +48,12 @@ Manipulation strategies. A skill owns subgraphs in generated workflows: its
 | [grasping-direct-ik](skills/grasping-direct-ik/) | Direct IK align-then-descend grasping. | — | `open-robot-skills[grasping-direct-ik]` |
 | [grasping-short-axis](skills/grasping-short-axis/) | Deterministic short-axis-aligned grasp with CuRobo. | — | `open-robot-skills[grasping-short-axis]` |
 | [grasping-with-planner](skills/grasping-with-planner/) | Collision-aware grasping using cuRobo trajectory planning over a per-observation collision world. | — | `open-robot-skills[grasping-with-planner]` |
+| [molmoact-libero](skills/molmoact-libero/) | Run the MolmoAct LIBERO checkpoint as a closed-loop VLA policy for the LIBERO Franka pick-and-place segment (the MolmoAct alternative to `pi05-libero`). Owns its serving preset — no `policy_id`. | `molmoact-libero.run` | `open-robot-skills[molmoact-libero]` |
 | [perceiving-object-parts](skills/perceiving-object-parts/) | Hierarchical perception for subpart targeting. | — | `open-robot-skills[perceiving-object-parts]` |
 | [perceiving-objects](skills/perceiving-objects/) | Fast single-path 3D object perception. | — | `open-robot-skills[perceiving-objects]` |
 | [perceiving-objects-multiview](skills/perceiving-objects-multiview/) | Robust three-method 3D object perception. | — | `open-robot-skills[perceiving-objects-multiview]` |
 | [perceiving-objects-oneshot](skills/perceiving-objects-oneshot/) | Lightweight one-shot 3D object perception. | — | `open-robot-skills[perceiving-objects-oneshot]` |
-| [running-policies](skills/running-policies/) | Run a learned VLA policy in closed loop until a termination signal fires or max_windows is reached. | `running-policies.run` | `open-robot-skills[running-policies]` |
+| [pi05-libero](skills/pi05-libero/) | Run the openpi π0.5 LIBERO checkpoint as a closed-loop VLA policy for the LIBERO Franka pick-and-place segment. Owns its serving preset — no `policy_id`. | `pi05-libero.run` | `open-robot-skills[pi05-libero]` |
 | [tracking-objects](skills/tracking-objects/) | Long-running skill that drives the SAM3 tracker from the graph-scoped observation stream. | `tracking-objects.track` | `open-robot-skills[tracking-objects]` |
 | [transporting-objects](skills/transporting-objects/) | Move the currently-held object above a destination container and release. | — | `open-robot-skills[transporting-objects]` |
 

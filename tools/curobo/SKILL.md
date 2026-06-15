@@ -10,6 +10,10 @@ compatibility: requires gap>=0.1
 metadata: {category: planning, tags: [planning, motion, gpu, cuda]}
 gap:
   requires: {gpu: true}
+  serving:
+    command: ["python", "-m", "gap_core.rpc.server", "--bundle", "curobo"]
+    protocol: stdio-msgpack
+    requires_gpu: true
   tools:
     - curobo.plan_to_grasp_poses: Collision-free trajectory to one of several grasp poses (goalset).
     - curobo.plan_with_grasped_object: Transport plan with the grasped object attached to the gripper.

@@ -95,12 +95,20 @@ def test_repo_passes_engine_format_validation():
     assert not failures, f"format validation errors: {failures}"
 
     # The extras convention is a warning in the engine checker (third-party
-    # checkouts may not have a pyproject); in THIS repo it is a hard rule.
+    # checkouts may not have a pyproject); in THIS repo it is a hard rule
+    # for `kind: skill` bundles only. Tool and policy bundles are exempted:
+    # they live under tools/ or policies/ with their own pyproject.toml +
+    # .venv/ (gap-managed via `gap skills install <name>`), so the root
+    # pyproject does NOT list them as extras — the bundle's pyproject is
+    # the single source of truth for its deps.
     extras = load_checkout_extras(SKILLS_ROOT)
     assert extras is not None
-    missing = [r.name for r in reports if r.name not in extras]
+    missing = [
+        r.name for r in reports
+        if r.kind == "skill" and r.name not in extras
+    ]
     assert not missing, (
-        f"bundles without a pip extra (extra name == bundle name): {missing}"
+        f"skill bundles without a pip extra (extra name == bundle name): {missing}"
     )
 
 

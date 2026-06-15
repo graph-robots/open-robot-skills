@@ -34,8 +34,9 @@ from __future__ import annotations
 import time
 from typing import Any, TypedDict
 
-from gap.skills import Skill, tool
-from gap.types import BoundingBox2D, Mask
+from gap_core.skills import Skill
+from gap_core.tools import tool
+from gap_core.types import BoundingBox2D, Mask
 
 
 class Output(TypedDict):

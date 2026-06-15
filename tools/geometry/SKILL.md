@@ -10,6 +10,9 @@ compatibility: requires gap>=0.1
 metadata: {category: perception, tags: [perception, planning, geometry]}
 gap:
   requires: {}
+  serving:
+    command: ["python", "-m", "gap_core.rpc.server", "--bundle", "geometry"]
+    protocol: stdio-msgpack
   tools:
     - geometry.depth_to_point_cloud: Convert a metric depth image to a camera-frame point cloud.
     - geometry.mask_to_world_points: Back-project a 2D mask to 3D world points via depth + calibration.

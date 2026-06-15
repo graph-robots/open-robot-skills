@@ -105,7 +105,7 @@ def test_world_converter_builds_mesh_namespace(skills_registry):
 
 def test_empty_trajectory_rejected_without_curobo(tool_registry):
     """Argument guards fire before the lazy cuRobo import."""
-    from gap.errors import ToolError
+    from gap_core.errors import ToolError
 
     with pytest.raises(ToolError):
         tool_registry.invoke(

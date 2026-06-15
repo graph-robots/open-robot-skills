@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from gap.errors import PerceptionFailed, ToolError
+from gap_core.errors import PerceptionFailed, ToolError
 from gap.testing import FakeContext, make_test_observation
 
 # ---------------------------------------------------------------------------

@@ -12,8 +12,8 @@ The grasp-approach metric is disabled: see
 from typing import TypedDict
 
 from gap import NodeContext
-from gap.errors import PlanningFailed
-from gap.types import Observation, Se3Pose, Trajectory, WorldConfig
+from gap_core.errors import PlanningFailed
+from gap_core.types import Observation, Se3Pose, Trajectory, WorldConfig
 
 
 class Output(TypedDict):
