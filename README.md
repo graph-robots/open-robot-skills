@@ -5,7 +5,7 @@
 **What your robot can do, one directory at a time.**
 
 A curated, contributable library of manipulation **skills** and model-backed
-**tool bundles** for [gap — graph as policy](https://github.com/graph-robots/graph-as-policy), in the
+**tool bundles** for [GaP — graph as policy](https://github.com/graph-robots/graph-as-policy), in the
 [Anthropic Agent Skills](https://agentskills.io/specification) format.
 The LLM pipeline composes these bundles into executable robot graphs;
 every bundle is one directory, one `SKILL.md`, one PR.
@@ -19,12 +19,11 @@ every bundle is one directory, one `SKILL.md`, one PR.
 </div>
 
 Clone this repo **next to the graph-as-policy checkout** (or set `GAP_SKILLS_PATH`) and
-every gap command — `gap run`, `gap generate`, `gap benchmark` — discovers
+every GaP command — `gap run`, `gap generate`, `gap benchmark` — discovers
 it automatically; no flags, no registration.
 
-New to gap? Start with the CPU-only
-[hello_graph example](https://github.com/graph-robots/graph-as-policy/tree/main/examples/hello_graph)
-and the [15-minute tour](https://github.com/graph-robots/graph-as-policy/blob/main/docs/quickstart.md),
+New to GaP? Start with [the libero_quickstart example](https://github.com/graph-robots/graph-as-policy/tree/main/examples/libero_quickstart)
+or the [15-minute tour](https://github.com/graph-robots/graph-as-policy/blob/main/docs/quickstart.md),
 then come back here when you want to add a capability.
 
 ## Contents
@@ -41,19 +40,22 @@ then come back here when you want to add a capability.
 Manipulation strategies. A skill owns subgraphs in generated workflows: its
 `SKILL.md` body is the guidance the subgraph agent reads, its
 `scripts/` are the canonical recipes the graph executes, and its declared
-`exit_conditions` are what downstream routing keys on.
+`exit_conditions` are what downstream routing keys on. Closed-loop VLA
+policies (`pi05-libero`, `molmoact-libero`) now live under `policies/`
+with `kind=policy` — they share the bundle format but are surfaced to
+graphs through the policy plane, not the skill registry.
 
 | Bundle | Description | Tools | Extra |
 |---|---|---|---|
 | [grasping-direct-ik](skills/grasping-direct-ik/) | Direct IK align-then-descend grasping. | — | `open-robot-skills[grasping-direct-ik]` |
 | [grasping-short-axis](skills/grasping-short-axis/) | Deterministic short-axis-aligned grasp with CuRobo. | — | `open-robot-skills[grasping-short-axis]` |
 | [grasping-with-planner](skills/grasping-with-planner/) | Collision-aware grasping using cuRobo trajectory planning over a per-observation collision world. | — | `open-robot-skills[grasping-with-planner]` |
-| [molmoact-libero](skills/molmoact-libero/) | Run the MolmoAct LIBERO checkpoint as a closed-loop VLA policy for the LIBERO Franka pick-and-place segment (the MolmoAct alternative to `pi05-libero`). Owns its serving preset — no `policy_id`. | `molmoact-libero.run` | `open-robot-skills[molmoact-libero]` |
+| [molmoact-libero](policies/molmoact-libero/) | Run the MolmoAct LIBERO checkpoint as a closed-loop VLA policy for the LIBERO Franka pick-and-place segment (the MolmoAct alternative to `pi05-libero`). Owns its serving preset — no `policy_id`. | `molmoact-libero.run` | `uv run gap skills install molmoact-libero` |
 | [perceiving-object-parts](skills/perceiving-object-parts/) | Hierarchical perception for subpart targeting. | — | `open-robot-skills[perceiving-object-parts]` |
 | [perceiving-objects](skills/perceiving-objects/) | Fast single-path 3D object perception. | — | `open-robot-skills[perceiving-objects]` |
 | [perceiving-objects-multiview](skills/perceiving-objects-multiview/) | Robust three-method 3D object perception. | — | `open-robot-skills[perceiving-objects-multiview]` |
 | [perceiving-objects-oneshot](skills/perceiving-objects-oneshot/) | Lightweight one-shot 3D object perception. | — | `open-robot-skills[perceiving-objects-oneshot]` |
-| [pi05-libero](skills/pi05-libero/) | Run the openpi π0.5 LIBERO checkpoint as a closed-loop VLA policy for the LIBERO Franka pick-and-place segment. Owns its serving preset — no `policy_id`. | `pi05-libero.run` | `open-robot-skills[pi05-libero]` |
+| [pi05-libero](policies/pi05-libero/) | Run the openpi π0.5 LIBERO checkpoint as a closed-loop VLA policy for the LIBERO Franka pick-and-place segment. Owns its serving preset — no `policy_id`. | `pi05-libero.run` | `uv run gap skills install pi05-libero` |
 | [tracking-objects](skills/tracking-objects/) | Long-running skill that drives the SAM3 tracker from the graph-scoped observation stream. | `tracking-objects.track` | `open-robot-skills[tracking-objects]` |
 | [transporting-objects](skills/transporting-objects/) | Move the currently-held object above a destination container and release. | — | `open-robot-skills[transporting-objects]` |
 
@@ -62,8 +64,8 @@ Manipulation strategies. A skill owns subgraphs in generated workflows: its
 Model-backed typed callables — **one bundle per model**, no task strategy.
 Tool bundles never own subgraphs; they appear in the flat tool catalog every
 subgraph agent (and every skill script) calls through `ctx.tool(...)`. Each
-bundle's `SKILL.md` documents its setup: dependencies (one extra per
-bundle), environment variables, weights, and quirks.
+bundle's `SKILL.md` documents its setup: dependencies (declared in the
+bundle's own `pyproject.toml`), environment variables, weights, and quirks.
 
 | Bundle | Description | Tools | Extra |
 |---|---|---|---|
@@ -83,37 +85,24 @@ uv run gap skills table --format markdown --kind skill   # and --kind tool
 
 ## Install
 
-Dependencies are declared **per bundle** as a pip extra of this repo (extra
-name == bundle name), so installs are declarative and one resolver run
-surfaces cross-bundle conflicts. The common case is the curated sets from
-the gap checkout:
+Tool and policy bundles now own their own `pyproject.toml`; install them
+per-bundle with `uv run gap skills install <bundle>` (or `--all`), not via
+top-level extras. From the GaP checkout:
 
 ```bash
 cd ../graph-as-policy
-uv sync --extra quickstart   # sam3 + grounding-dino + geometry (+ engine + sim)
-uv sync --extra grocery      # + curobo (the acceptance-benchmark set; needs CUDA_HOME)
-uv sync --extra all          # everything
-uv run gap skills check --download    # verify bundles + prefetch model weights
-```
-
-The curated sets are documented in the
-[gap README's environment table](https://github.com/graph-robots/graph-as-policy#pick-your-environment).
-
-Working on this repo standalone, sync it directly (the engine resolves from
-the sibling `../graph-as-policy` checkout):
-
-```bash
-uv sync --extra sam3                                  # any single bundle…
-CUDA_HOME=/usr/local/cuda uv sync --extra curobo      # …CuRobo compiles CUDA at install
-uv sync --extra all
+uv sync                                       # engine + sim baseline (LIBERO included)
+uv run gap skills install --all               # every bundle in this registry
+uv run gap skills install sam3 grounding-dino geometry   # …or pick a subset
+CUDA_HOME=/usr/local/cuda uv run gap skills install curobo  # CuRobo compiles CUDA at install
+uv run gap skills check --download           # verify bundles + prefetch model weights
 ```
 
 `uv.lock` pins the exact environment of the acceptance benchmark run. Two
 deliberate knobs keep it solvable (documented in `pyproject.toml`): sam3's
 over-strict `numpy==1.26` metadata pin is relaxed via
 `override-dependencies`, and `nvidia-curobo` builds unisolated against the
-environment's torch. pip works too: `pip install -e ../graph-as-policy -e ".[<extra>]"`
-(add `--no-build-isolation` for curobo).
+environment's torch.
 
 ## Verify a checkout
 
@@ -129,7 +118,7 @@ uv run gap tools list               # the flat tool catalog with live schemas
 shape per bundle kind, referenced resource paths, `allowed_tools`
 resolution, declared type names, one extra per bundle) plus an import
 probe that maps missing dependencies to their install line — the same
-install-verification step the gap quickstart runs. Missing weights are a
+install-verification step the GaP quickstart runs. Missing weights are a
 WARN, not a FAIL — nothing installs behind your back.
 
 `gap check` answers the operational question instead: per bundle, are the
@@ -137,7 +126,7 @@ deps importable, the declared `gap.requires:` met (GPU, env vars), the
 weights cached — and which skills are therefore runnable right now, with
 a fix hint per failure.
 
-This repo is one **skill registry** — the canonical example. gap merges
+This repo is one **skill registry** — the canonical example. GaP merges
 any number of them by precedence (your lab's fork can shadow individual
 bundles here): `gap registry init` scaffolds a new one, `gap registry add
 <name> <path>` layers it on top, `gap registry list` shows the active
@@ -157,7 +146,7 @@ unit-test skeleton** (`tests/test_my_skill.py`); then:
 
 1. **Write the `SKILL.md`.** Spec frontmatter (`name` == dirname,
    third-person `description` ending in a "Use when…" sentence — it is the
-   coordinator's entire view of your bundle), gap extensions under the
+   coordinator's entire view of your bundle), GaP extensions under the
    `gap:` key (`allowed_tools`, `exit_conditions`, `canonical_scripts`, …).
 2. **Declare operational requirements** — a `gap.requires:` block
    (`{gpu: true, env: [MY_API_KEY], env_any: [...], weights: true}`;
@@ -170,11 +159,11 @@ unit-test skeleton** (`tests/test_my_skill.py`); then:
 4. **Lazy-load models.** Importing your `tools.py` must not import
    torch/transformers; load weights on first call (the test suite enforces
    this).
-5. **Test it CPU-only** with `gap.testing` (`FakeContext`,
+5. **Test it without hardware** using `gap.testing` (`FakeContext`,
    `make_test_observation`) — flesh out the scaffolded test;
    `uv run gap skills test my-skill` (or plain `uv run pytest tests -q`)
-   must stay green without a GPU; model-touching smokes go behind the
-   `gpu` marker.
+   must stay green on a workstation without a robot or accelerator;
+   model-touching smokes go behind the `gpu` marker.
 6. **Check yourself before the PR:**
 
    ```bash
@@ -189,12 +178,12 @@ exit-condition design, streaming skills — is in
 
 [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json) indexes
 every bundle, so this checkout doubles as a Claude Code plugin marketplace:
-the same `SKILL.md` files that drive gap's graph generation are loadable as
+the same `SKILL.md` files that drive GaP's graph generation are loadable as
 agent skills.
 
-To drive **gap itself** from Claude Code — search these registries, check
+To drive **GaP itself** from Claude Code — search these registries, check
 capabilities, run/generate graphs, author new tested bundles — install the
-engine's agent skill from the gap repo (it also re-exports this registry's
+engine's agent skill from the GaP repo (it also re-exports this registry's
 bundles, so one marketplace covers both):
 
 ```bash
