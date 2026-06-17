@@ -18,13 +18,13 @@ gap:
     - geometry.build_world_config
     - robot.get_observation
     - curobo.plan_to_grasp_poses
-    - curobo.plan_to_pose
     - curobo.plan_grasp_motion
     - curobo.plan_directed_linear
     - robot.execute_trajectory
     - robot.move_to_joints
     - robot.get_ee_pose
     - robot.go_to_pose
+    - robot.go_to_pose_cartesian
     - robot.open_gripper
     - robot.close_gripper
   exit_conditions:
@@ -87,9 +87,11 @@ gap:
       skipping `approach` makes the descent start from a wrong wrist
       rotation and slip. `approach_above.py` lifts to a safe height,
       translates above the target, then rotates in place to the grasp
-      orientation via CuRobo `curobo.plan_to_pose` (NOT the connector's
-      basic IK — it cannot flip the Franka wrist and silently no-ops the
-      rotate, leaving a horizontal EE that descends sideways).
+      orientation — all three legs route through
+      `robot.go_to_pose_cartesian` (gap.connector.ik.CuRoboBackend), which
+      uses cuRobo's MotionPlanner for both the linear plan and the
+      plan_to_pose fallback, so the wrist flip succeeds even from the
+      horizontal home pose.
     - >
       ALWAYS insert a `finalize` state (`scripts/<sg>/finalize_trajectory.py`,
       input `trajectory = Ref("plan.trajectory")`) BETWEEN `execute` and
