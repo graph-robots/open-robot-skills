@@ -11,10 +11,18 @@ dependencies = [
   "graph-as-policy-core",
   # Vendored from gap-runtime's deps so the bundle's .venv has its own
   # Anthropic client and HTTP transport without pulling in the rest of gap.
-  "anthropic>=0.40",
+  # `anthropic[vertex]` adds google-auth so AnthropicVertex can route
+  # claude-* via Vertex AI; matches the engine's [vertex] extra.
+  "anthropic[vertex]>=0.40",
   "httpx>=0.27",
   # tools.py encodes images for the API payload.
   "pillow>=10",
+  # Gemini-on-Vertex needs the google-genai client. Bundled unconditionally
+  # because (a) the bundle declares vertex as a first-class provider in
+  # SKILL.md, and (b) GAP_VLM_* now inherits from GAP_LLM_* — a shell
+  # already configured for vertex+gemini expects the bundle to "just
+  # work" without a second install step. Pin matches gap's [vertex] extra.
+  "google-genai>=1.0,<1.60",
 ]
 
 [build-system]
