@@ -603,25 +603,28 @@ class TestTransportingObjects:
         assert ctx.calls_to("robot.go_to_pose")[0].kwargs["pose"]["rotation"] is drop_rotation
         assert ctx.calls_to("robot.open_gripper")[0].kwargs["settle_steps"] == 60
 
-    def test_descend_release_linear_falls_back_to_go_to_pose(self, skills_registry):
+    def test_descend_release_linear_routes_through_connector_cartesian(self, skills_registry):
         release = _script(
             skills_registry, "transporting-objects", "descend_release_linear"
         )
         ctx = FakeContext({
-            "robot.get_observation": _observation(),
-            "curobo.plan_linear": {
-                "success": False, "trajectory": None, "failure_reason": "collision",
-            },
-            "robot.go_to_pose": None,
+            "robot.go_to_pose_cartesian": None,
             "robot.open_gripper": {"position": 1.0},
             "robot.go_home": None,
         })
         release.run(ctx, drop_position=_vec3(0.5, -0.2, 0.2))
         order = [c.tool for c in ctx.calls]
-        # Linear plan failed -> go_to_pose fallback, never execute_trajectory.
-        assert "robot.go_to_pose" in order
+        # Linear descent now goes through the connector's TCP-aware cartesian
+        # tool; the cuRobo→plan_to_pose fallback lives inside the backend, so
+        # the script no longer needs an explicit go_to_pose fallback path.
+        assert order == [
+            "robot.go_to_pose_cartesian",
+            "robot.open_gripper",
+            "robot.go_home",
+        ]
+        cart_pose = ctx.calls_to("robot.go_to_pose_cartesian")[0].kwargs["pose"]
+        assert cart_pose["position"] == _vec3(0.5, -0.2, 0.2)
         assert ctx.call_count("robot.execute_trajectory") == 0
-        assert order[-2:] == ["robot.open_gripper", "robot.go_home"]
 
 
 # ---------------------------------------------------------------------------

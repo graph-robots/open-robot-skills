@@ -31,9 +31,13 @@ class Output(TypedDict):
 
 # Canonical top-down orientation — gripper +Z points -Z_world.
 _DOWN: Quaternion = {"w": 0.0, "x": 1.0, "y": 0.0, "z": 0.0}
-# Lift height at which to clear the workspace before lateral translation.
-# Downstream nodes may assume "ee is at z=0.45 after waypoint_move".
-_LIFT_Z_M = 0.45
+# TCP-frame fingertip lift altitude. ``robot.go_to_pose_cartesian`` applies
+# the configured TCP offset (≈0.097 m on Franka), so 0.353 puts the
+# panda_hand link at z≈0.45 — the legacy "ee at z=0.45 after waypoint_move"
+# invariant downstream nodes assumed, now expressed in fingertip semantics
+# instead of link semantics. Going higher (0.45 in TCP frame → link at 0.547)
+# pushes Franka near the workspace boundary and the linear plan refuses.
+_LIFT_Z_M = 0.353
 
 
 def run(

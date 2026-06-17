@@ -14,6 +14,7 @@ metadata: {category: motion, tags: [motion, transport, place, drop]}
 gap:
   allowed_tools:
     - robot.go_to_pose
+    - robot.go_to_pose_cartesian
     - robot.go_home
     - robot.open_gripper
     - robot.get_ee_pose
@@ -23,9 +24,7 @@ gap:
     - geometry.mask_to_world_points
     - geometry.filter_and_compute_obb
     - geometry.build_world_config
-    - curobo.plan_to_pose
     - curobo.plan_with_grasped_object
-    - curobo.plan_linear
     - grounding-dino.detect
     - vlm.query
     - sam3.segment_box
@@ -284,7 +283,8 @@ State details:
    **Variant — collision-aware lift/translate (`waypoint_move_carve`)**.
    Same inputs (`drop_x`, `drop_y`) and same return shape, but the node
    rebuilds the world from a fresh observation and routes through
-   `curobo.plan_with_grasped_object` instead of `curobo.plan_to_pose`.
+   `curobo.plan_with_grasped_object` instead of the connector's
+   `robot.go_to_pose_cartesian` (which is TCP-aware but not world-aware).
    Use when a known obstacle sits on the transport path between the
    grasp pose and the drop XY (an oven door, a shelf above the table, a
    tall bottle the lift would clip). A repair pass may flip the
@@ -298,11 +298,12 @@ State details:
    on failure → exit `blocked`.
 
    **Variant — linear descent (`descend_release_linear`)**. Same
-   node-level contract, but the descent goes through `curobo.plan_linear`
-   so the held object descends on a straight Cartesian line with the
-   orientation held — the cleanest release dynamics for subpart-grasp +
-   place-ON tasks (frypan handle → stove). Falls back to
-   `robot.go_to_pose` when the linear plan fails.
+   node-level contract, but the descent goes through the connector's
+   TCP-aware `robot.go_to_pose_cartesian` (cuRobo linear plan with a
+   `plan_to_pose` fallback built into the backend), so the held object
+   descends on a straight Cartesian line with the orientation held — the
+   cleanest release dynamics for subpart-grasp + place-ON tasks (frypan
+   handle → stove).
 
 ## Required end states
 

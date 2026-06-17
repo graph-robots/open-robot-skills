@@ -1,46 +1,40 @@
-"""Linear-descent variant of ``descend_release`` using cuRobo ``plan_linear``.
+"""Linear-descent variant of ``descend_release`` using the connector's TCP-aware
+``robot.go_to_pose_cartesian``.
 
-Drop-in replacement for ``descend_release.py`` — same node-level
-contract: takes ``drop_position`` (and optionally ``drop_rotation``),
-descends, opens the gripper, and retracts. The difference is in HOW
-the descent is executed:
+Drop-in replacement for ``descend_release.py`` — same node-level contract:
+takes ``drop_position`` (and optionally ``drop_rotation``), descends, opens
+the gripper, retracts.
 
-- ``descend_release.py`` uses ``robot.go_to_pose`` for the descent,
-  which goes through TrajOpt-style IK and may produce a curved
-  end-effector path (the solver is free to deviate from a straight
-  Cartesian line as long as start + goal pose constraints are met). On
-  asymmetric loads (subpart-grasped frypan / kettle), it sometimes
-  picks an IK solution that swings the elbow during the descent — the
-  held object visibly tilts before release.
-- ``descend_release_linear.py`` (this file) calls ``curobo.plan_linear``
-  with the current EE pose as ``start_pose`` and ``(drop_position,
-  drop_rotation)`` as ``end_pose``. plan_linear constrains the
-  trajectory to a straight Cartesian line in EE space, holding the
-  orientation between the two endpoints — the held object descends
-  vertically with no spurious rotation. Faster to execute because
-  the planner doesn't search for IK alternatives; cheaper to verify
-  visually because the EE trace is a pure line.
+Routes through ``robot.go_to_pose_cartesian`` (gap.connector.ik.CuRoboBackend):
+this applies the configured TCP offset / TCP rotation, plans a straight
+Cartesian line at the IK link, and falls back internally to a single-pose
+collision-aware plan (``plan_to_pose``) when the linear plan cannot solve.
+The previous ``curobo.plan_linear`` bundle call interpreted ``drop_position``
+as a panda_hand link target, which silently dropped the TCP offset — fine
+when the workflow encoded the link-frame offset into pose math, but a
+source of vertical misses when the workflow really did mean "put the
+fingertips at this XYZ".
 
 When to use this variant:
 - For ANY subpart-grasp + place-ON task (frypan handle → stove, kettle
-  spout → trivet). The yaw-preserving compute_drop_pose + linear
-  descent combination gives the cleanest possible release dynamics.
-- A repair pass can flip ``descend_release`` →
-  ``descend_release_linear`` when the place stage shows visible release
-  artefacts (object tilting on touch-down) even though the geometric
-  drop pose is correct.
+  spout → trivet). The yaw-preserving compute_drop_pose + linear descent
+  combination gives the cleanest possible release dynamics.
+- A repair pass can flip ``descend_release`` → ``descend_release_linear``
+  when the place stage shows visible release artefacts (object tilting on
+  touch-down) even though the geometric drop pose is correct.
 
 When NOT to use it:
-- When the descent path needs to avoid an obstacle. plan_linear refuses
-  to plan around obstacles — it only checks the straight line and fails
-  if any waypoint collides. Use the go_to_pose-based
-  ``descend_release.py`` for cluttered scenes.
+- When the descent path needs to avoid an obstacle. ``go_to_pose_cartesian``
+  refuses to plan around obstacles — it only checks the straight line and
+  falls back to a collision-free single-pose plan if the line fails. Use
+  the ``descend_release.py`` variant for cluttered scenes that need
+  smoother IK-only descent.
 
 Inputs:
-- ``drop_position`` (Vec3): final TCP target XYZ, same as descend_release.
-- ``drop_rotation`` (Quaternion, optional): EE orientation held through
-  the descent. Defaults to canonical top-down ``(w=0, x=1, y=0, z=0)``
-  when unset.
+- ``drop_position`` (Vec3): TCP target XYZ (fingertip position), same as
+  descend_release.
+- ``drop_rotation`` (Quaternion, optional): TCP orientation held through
+  the descent. Defaults to canonical top-down ``(w=0, x=1, y=0, z=0)``.
 """
 
 from typing import TypedDict
@@ -63,33 +57,9 @@ def run(
     drop_rotation: Quaternion | None = None,
 ) -> Output:
     rotation = drop_rotation if drop_rotation is not None else _DOWN
-
-    obs = ctx.tool("robot.get_observation")
-    arm = obs["arms"][0]
-    start_pose = arm["ee_pose"]
-    start_joints = arm["joint_state"]
-
     end_pose: Se3Pose = {"position": drop_position, "rotation": rotation}
 
-    plan = ctx.tool(
-        "curobo.plan_linear",
-        start_pose=start_pose,
-        end_pose=end_pose,
-        start_joint_position=start_joints,
-    )
-    if not plan["success"]:
-        # Linear plan failed. Fall back to the IK-based go_to_pose so the
-        # workflow still completes — the descent may not be a clean line
-        # but it should still reach the target.
-        ctx.tool("robot.go_to_pose", pose=end_pose)
-    else:
-        ctx.tool(
-            "robot.execute_trajectory",
-            trajectory=plan["trajectory"],
-            subsample=2,
-            max_steps_per_waypoint=8,
-            tolerance=0.02,
-        )
+    ctx.tool("robot.go_to_pose_cartesian", pose=end_pose)
 
     # Open the gripper and settle long enough for the object to land
     # before the retract starts moving the arm laterally.
