@@ -10,6 +10,11 @@ dependencies = [
   "graph-as-policy-core",
   # Model weights load via transformers; torch backs the inference path.
   "torch>=2.7",
+  # transformers' GroundingDinoProcessor.post_process calls torchvision::nms
+  # internally — pin torchvision so the matching op kernel is present (without
+  # it transformers imports OK but post-process raises
+  # "operator torchvision::nms does not exist" at first detection call).
+  "torchvision>=0.22",
   "transformers>=4.41",
   "pillow>=10",
 ]

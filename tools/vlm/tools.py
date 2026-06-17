@@ -7,20 +7,30 @@ system prompt and no temperature knob — prompts are self-contained and
 sampling is pinned for determinism.
 
 Providers — selected by ``GAP_VLM_PROVIDER`` (default ``"anthropic"``); a
-per-call ``provider=`` kwarg overrides the env:
+per-call ``provider=`` kwarg overrides the env. Every ``GAP_VLM_*`` knob
+inherits from the matching ``GAP_LLM_*`` / google-SDK env var when unset
+(see :func:`_resolve_provider`, :func:`_resolve_model`,
+:func:`_resolve_vertex_project`, :func:`_resolve_vertex_region`) — so a
+user who configures the agent's LLM doesn't have to re-configure the VLM
+bundle separately. Set ``GAP_VLM_*`` explicitly only to route the VLM to
+a different provider/model than the agent.
 
 - ``anthropic`` — Anthropic messages API (the ``anthropic`` SDK is a gap core
-  dependency). Model from ``GAP_VLM_MODEL``, else
-  :data:`DEFAULT_ANTHROPIC_MODEL`. API key via the SDK's default resolution
-  (``ANTHROPIC_API_KEY``).
+  dependency). Model from ``GAP_VLM_MODEL`` (else ``GAP_LLM_MODEL`` else
+  :data:`DEFAULT_ANTHROPIC_MODEL`). API key via the SDK's default
+  resolution (``ANTHROPIC_API_KEY``).
 - ``openai`` — any OpenAI-compatible chat-completions endpoint (Gemini proxy,
   GPT-4o, local vLLM); the source's proxy path ported verbatim (data-URL
   image blocks, ``temperature: 0.0``, 3 retries with exponential backoff).
   Config: ``GAP_VLM_BASE_URL`` + ``GAP_VLM_API_KEY`` + ``GAP_VLM_MODEL``.
 - ``vertex`` — Vertex AI direct: ``AnthropicVertex`` for ``claude-*`` models,
   ``google-genai`` for Gemini models. Lazy imports; install the vertex extra
-  (``pip install "graph-as-policy[vertex]"``). Config: ``GAP_VLM_MODEL`` +
-  ``GAP_VLM_PROJECT_ID`` + ``GAP_VLM_REGION`` (default ``"global"``).
+  (``pip install "graph-as-policy[vertex]"``). Config:
+  ``GAP_VLM_MODEL`` (else ``GAP_LLM_MODEL``) +
+  ``GAP_VLM_PROJECT_ID`` (else ``GOOGLE_CLOUD_PROJECT`` else
+  ``ANTHROPIC_VERTEX_PROJECT_ID``) +
+  ``GAP_VLM_REGION`` (else ``GOOGLE_CLOUD_REGION`` else
+  ``GOOGLE_CLOUD_LOCATION`` else ``"global"``).
 
 Generation config: the dev servicer's proxy path pinned ``temperature: 0.0``
 + ``max_tokens: 1024`` with 3 retries, while its vertex path left the SDK
@@ -57,8 +67,62 @@ logger = logging.getLogger(__name__)
 #: ``model=`` or globally with the ``GAP_VLM_MODEL`` env var.
 DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8"
 
-#: Provider used when neither ``provider=`` nor ``GAP_VLM_PROVIDER`` is set.
+#: Provider used when neither ``provider=`` nor ``GAP_VLM_PROVIDER`` nor
+#: ``GAP_LLM_PROVIDER`` is set.
 DEFAULT_PROVIDER = "anthropic"
+
+
+def _envstr(name: str) -> str:
+    """``os.environ.get(name, "").strip()`` — empty string if unset/blank."""
+    return os.environ.get(name, "").strip()
+
+
+def _resolve_provider(provider: str | None) -> str:
+    """Per-call override > ``GAP_VLM_PROVIDER`` > ``GAP_LLM_PROVIDER`` >
+    :data:`DEFAULT_PROVIDER`. The ``GAP_LLM_*`` inheritance lets a user
+    who's already configured the agent's LLM run the VLM bundle through
+    the same provider without re-exporting a parallel set of env vars
+    (the silent ``GAP_VLM_*`` defaults caused the dev-era milk-vs-soup
+    mispick: missing creds → tournament fell back to "box 0 wins")."""
+    return (
+        (provider or "").strip().lower()
+        or _envstr("GAP_VLM_PROVIDER").lower()
+        or _envstr("GAP_LLM_PROVIDER").lower()
+        or DEFAULT_PROVIDER
+    )
+
+
+def _resolve_model(model: str | None) -> str:
+    """Per-call override > ``GAP_VLM_MODEL`` > ``GAP_LLM_MODEL``; empty
+    string when nothing is set so provider-default paths can fire."""
+    return (
+        (model or "").strip()
+        or _envstr("GAP_VLM_MODEL")
+        or _envstr("GAP_LLM_MODEL")
+    )
+
+
+def _resolve_vertex_project() -> str:
+    """``GAP_VLM_PROJECT_ID`` > ``GOOGLE_CLOUD_PROJECT`` (the documented
+    google-genai knob) > ``ANTHROPIC_VERTEX_PROJECT_ID`` (the Anthropic
+    SDK's vertex knob). Empty string when unset — the caller raises with
+    the install hint."""
+    return (
+        _envstr("GAP_VLM_PROJECT_ID")
+        or _envstr("GOOGLE_CLOUD_PROJECT")
+        or _envstr("ANTHROPIC_VERTEX_PROJECT_ID")
+    )
+
+
+def _resolve_vertex_region() -> str:
+    """``GAP_VLM_REGION`` > ``GOOGLE_CLOUD_REGION`` > ``GOOGLE_CLOUD_LOCATION``
+    > ``"global"`` (the documented default for Anthropic-on-Vertex)."""
+    return (
+        _envstr("GAP_VLM_REGION")
+        or _envstr("GOOGLE_CLOUD_REGION")
+        or _envstr("GOOGLE_CLOUD_LOCATION")
+        or "global"
+    )
 
 _MAX_TOKENS = 1024  # ported from the source servicer
 _MAX_RETRIES = 3
@@ -139,7 +203,7 @@ def _query_anthropic(prompt: str, images: list[np.ndarray], model: str | None) -
 
     client = anthropic.Anthropic()
     response = client.messages.create(
-        model=model or os.environ.get("GAP_VLM_MODEL") or DEFAULT_ANTHROPIC_MODEL,
+        model=_resolve_model(model) or DEFAULT_ANTHROPIC_MODEL,
         max_tokens=_MAX_TOKENS,
         temperature=_TEMPERATURE,
         messages=[{"role": "user", "content": _anthropic_blocks(prompt, images)}],
@@ -167,12 +231,13 @@ def _query_openai(prompt: str, images: list[np.ndarray], model: str | None) -> s
             "OpenAI-compatible chat-completions endpoint "
             "(e.g. http://localhost:8000/v1)",
         )
-    model = model or os.environ.get("GAP_VLM_MODEL", "")
+    model = _resolve_model(model)
     if not model:
         raise ToolError(
             "vlm",
-            "GAP_VLM_MODEL is not set; the 'openai' provider needs the model "
-            "name served at GAP_VLM_BASE_URL",
+            "no model set; the 'openai' provider needs the model name "
+            "served at GAP_VLM_BASE_URL (set GAP_VLM_MODEL, or "
+            "GAP_LLM_MODEL — VLM inherits from LLM when unset)",
         )
     api_key = os.environ.get("GAP_VLM_API_KEY", "")
     chat_url = f"{base_url.rstrip('/')}/chat/completions"
@@ -225,16 +290,17 @@ def _is_claude_model(model: str) -> bool:
 
 
 def _query_vertex(prompt: str, images: list[np.ndarray], model: str | None) -> str:
-    model = model or os.environ.get("GAP_VLM_MODEL", "")
+    model = _resolve_model(model)
     if not model:
         raise ToolError(
             "vlm",
-            "GAP_VLM_MODEL is not set; the 'vertex' provider needs a model "
-            "name to route between AnthropicVertex (claude-*) and "
-            "google-genai (gemini)",
+            "no model set; the 'vertex' provider needs a model name to "
+            "route between AnthropicVertex (claude-*) and google-genai "
+            "(gemini). Set GAP_VLM_MODEL, or GAP_LLM_MODEL — VLM inherits "
+            "from LLM when unset.",
         )
-    project_id = os.environ.get("GAP_VLM_PROJECT_ID", "")
-    region = os.environ.get("GAP_VLM_REGION", "") or "global"
+    project_id = _resolve_vertex_project()
+    region = _resolve_vertex_region()
 
     if _is_claude_model(model):
         try:
@@ -242,8 +308,10 @@ def _query_vertex(prompt: str, images: list[np.ndarray], model: str | None) -> s
         except ImportError as exc:
             raise ToolError(
                 "vlm",
-                "the 'vertex' provider needs the vertex extra: "
-                'pip install "graph-as-policy[vertex]"',
+                "anthropic.lib.vertex (AnthropicVertex) is not available "
+                "in the vlm bundle's venv — the bundle pins anthropic>=0.40 "
+                "which ships it. Re-sync: "
+                "`uv sync --project open-robot-skills/tools/vlm`.",
             ) from exc
 
         client = AnthropicVertex(project_id=project_id, region=region)
@@ -262,8 +330,10 @@ def _query_vertex(prompt: str, images: list[np.ndarray], model: str | None) -> s
         except ImportError as exc:
             raise ToolError(
                 "vlm",
-                "the 'vertex' provider needs the vertex extra: "
-                'pip install "graph-as-policy[vertex]"',
+                "google-genai is not installed in the vlm bundle's venv "
+                "(needed to route gemini-* via Vertex). Re-sync the bundle: "
+                "`uv sync --project open-robot-skills/tools/vlm` "
+                "(google-genai is declared in tools/vlm/pyproject.toml).",
             ) from exc
 
         client = genai.Client(vertexai=True, project=project_id, location=region)
@@ -316,13 +386,14 @@ def _query(
     provider: str | None,
     model: str | None,
 ) -> str:
-    name = (provider or os.environ.get("GAP_VLM_PROVIDER") or DEFAULT_PROVIDER).lower()
+    name = _resolve_provider(provider)
     fn = _PROVIDERS.get(name)
     if fn is None:
         raise ToolError(
             "vlm",
             f"unknown provider {name!r} (valid: {sorted(_PROVIDERS)}); set "
-            f"GAP_VLM_PROVIDER or pass provider=",
+            f"GAP_VLM_PROVIDER (or GAP_LLM_PROVIDER — VLM inherits from "
+            f"LLM when unset) or pass provider=",
         )
     return fn(prompt, _gather_images(image, images), model)
 

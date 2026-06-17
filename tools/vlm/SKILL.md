@@ -9,7 +9,18 @@ license: MIT
 compatibility: requires gap>=0.1
 metadata: {category: perception, tags: [perception, vlm, api]}
 gap:
-  requires: {env_any: [ANTHROPIC_API_KEY, GAP_VLM_BASE_URL, GAP_VLM_PROJECT_ID]}
+  # The vlm bundle inherits provider/model/project/region from GAP_LLM_*
+  # and GOOGLE_CLOUD_* when its own GAP_VLM_* knobs are unset (see
+  # tools.py:_resolve_provider). env_any lists the inheritance sources
+  # so a shell configured solely for the agent LLM doesn't trip this
+  # readiness gate. `gap check` (and `gap check --probe`) report the
+  # RESOLVED config — use them to verify the bundle will dispatch where
+  # you expect.
+  requires: {env_any: [
+    ANTHROPIC_API_KEY,
+    GAP_VLM_BASE_URL, GAP_VLM_PROJECT_ID,
+    GAP_LLM_PROVIDER, GOOGLE_CLOUD_PROJECT, ANTHROPIC_VERTEX_PROJECT_ID,
+  ]}
   serving:
     command: ["python", "-m", "gap_core.rpc.server", "--bundle", "vlm"]
     protocol: stdio-msgpack
