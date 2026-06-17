@@ -67,6 +67,26 @@ def weights_cached() -> bool | None:
     return isinstance(result, str)
 
 
+def prefetch() -> None:
+    """Snapshot-download the configured GDINO weights into the HF cache.
+
+    Called by ``gap skills check --download``. Idempotent: re-running
+    against an already-cached snapshot is a near-no-op (HF revision
+    check + symlink refresh). Logs the bytes added so the user sees
+    progress; raises on network / auth / disk errors so ``gap skills
+    check --download`` exits non-zero.
+
+    Uses ``snapshot_download`` rather than ``AutoModel.from_pretrained``
+    so we never load torch / instantiate the model at prefetch time —
+    important for CI lanes and for the bare-engine venv.
+    """
+    from huggingface_hub import snapshot_download
+
+    logger.info("[grounding-dino] prefetching weights for %s ...", _MODEL_NAME)
+    snapshot_download(repo_id=_MODEL_NAME, repo_type="model")
+    logger.info("[grounding-dino] prefetch complete (cached at HF default)")
+
+
 def _get_model() -> tuple[Any, Any]:
     """Load the Grounding DINO model + processor once (lazy singleton)."""
     global _model, _processor

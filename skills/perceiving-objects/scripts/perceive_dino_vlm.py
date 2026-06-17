@@ -41,6 +41,49 @@ from gap_core.types import BoundingBox2D, CameraFrame, Mask, PointCloud, pose_to
 
 logger = logging.getLogger(__name__)
 
+# Print the LLM-credentials hint at most once per process. We don't swallow
+# the auth error — the not_found exit must still fire so the subgraph
+# routes correctly — but we do tag it with an actionable hint the first
+# time so the user knows which env var to set.
+_AUTH_HINT_FIRED = False
+_AUTH_HINT = (
+    "no LLM credentials for the vlm tool bundle — the VLM tournament will"
+    " raise and the subgraph will route to its not_found exit. To enable"
+    " VLM disambiguation, set one of:\n"
+    "    anthropic:  export ANTHROPIC_API_KEY=...\n"
+    "    vertex:     gcloud auth application-default login + export GOOGLE_CLOUD_PROJECT=...\n"
+    "    openai:     export OPENAI_API_KEY=...\n"
+    "  (or pin the bundle's own provider via GAP_VLM_PROVIDER /"
+    " GAP_VLM_PROJECT_ID / GAP_VLM_BASE_URL).\n"
+    "  Use `gap check` to see which providers are configured."
+)
+
+
+def _looks_like_auth_error(exc: BaseException) -> bool:
+    """True when the VLM call failed because no credentials were set.
+
+    Catches the anthropic SDK's request-build-time TypeError ('Could not
+    resolve authentication method'), typed AuthenticationError, and raw
+    401/Unauthorized responses from any upstream.
+    """
+    msg = str(exc).lower()
+    return (
+        "could not resolve authentication" in msg
+        or "authenticationerror" in type(exc).__name__.lower()
+        or " 401 " in f" {msg} "
+        or "unauthorized" in msg
+        or "invalid x-api-key" in msg
+    )
+
+
+def _maybe_warn_auth_once(exc: BaseException) -> None:
+    """Tag the first auth-class VLM failure with the credentials hint."""
+    global _AUTH_HINT_FIRED
+    if _AUTH_HINT_FIRED or not _looks_like_auth_error(exc):
+        return
+    _AUTH_HINT_FIRED = True
+    logger.warning("VLM call failed (auth): %s\nhint: %s", exc, _AUTH_HINT)
+
 _LABELS = ["A", "B", "C", "D", "E", "F", "G", "H"]
 _INTERSECTION_DIST = 0.01
 _MIN_INTERSECTION = 1
@@ -55,7 +98,13 @@ _MIN_INTERSECTION = 1
 # under nondeterministic sampling and a verify gate that mislabeled
 # affirmative prose as "no".
 # v5: robot-point exclusion in the cloud path.
-_CACHE_VERSION = "6"  # v6: wrist-support cloud fusion on the verified path
+# v6: wrist-support cloud fusion on the verified path.
+# v7: vlm bundle now inherits GAP_VLM_* from GAP_LLM_*; key off the
+# RESOLVED provider/model so a user who exports only GAP_LLM_* hits the
+# same cache entry as one who exports the equivalent GAP_VLM_*.
+# v8: wrist-support fusion now filters to the intersected subset rather
+# than dragging in the whole wrist cloud (see _filter_wrist_to_anchor).
+_CACHE_VERSION = "8"
 _CACHE_ENABLED = os.environ.get("GAP_PERCEPTION_CACHE", "1") == "1"
 # Default to checkout-local .llm_cache/perceiving-objects/ so cache is
 # per-checkout and easy to wipe. Override with GAP_PERCEPTION_CACHE_DIR.
@@ -80,15 +129,34 @@ def _hash_camera(cam: CameraFrame) -> bytes:
     return h.digest()
 
 
+def _resolved_vlm_provider() -> str:
+    """Mirrors :func:`tools.vlm._resolve_provider` for the cache key — kept
+    in-script because skill bundles don't import the vlm tool bundle."""
+    return (
+        os.environ.get("GAP_VLM_PROVIDER", "").strip().lower()
+        or os.environ.get("GAP_LLM_PROVIDER", "").strip().lower()
+        or "anthropic"
+    )
+
+
+def _resolved_vlm_model() -> str:
+    """Mirrors :func:`tools.vlm._resolve_model` for the cache key."""
+    return (
+        os.environ.get("GAP_VLM_MODEL", "").strip()
+        or os.environ.get("GAP_LLM_MODEL", "").strip()
+    )
+
+
 def _make_cache_key(cameras: list[CameraFrame], args: dict) -> str:
     h = hashlib.sha256()
     h.update(f"v{_CACHE_VERSION}".encode())
     h.update(b"|model|")
-    # The vlm bundle's provider/model env config is part of the key so
-    # swapping models doesn't return stale cached picks.
-    h.update(os.environ.get("GAP_VLM_PROVIDER", "").encode("utf-8"))
+    # Hash the RESOLVED provider/model (post-inheritance from GAP_LLM_*)
+    # so two equivalent configs share a cache entry. Swapping models
+    # still invalidates because the resolved value changes.
+    h.update(_resolved_vlm_provider().encode("utf-8"))
     h.update(b"/")
-    h.update(os.environ.get("GAP_VLM_MODEL", "").encode("utf-8"))
+    h.update(_resolved_vlm_model().encode("utf-8"))
     for cam in cameras:
         h.update(b"|cam|")
         h.update(_hash_camera(cam))
@@ -318,13 +386,23 @@ def _tournament(
                 object_name=object_name,
                 object_description=object_description,
             )
+            # Let VLM transport/auth errors propagate. The dev-era swallow
+            # that picked `a` on any exception silently turned a missing
+            # API key into "tournament picks the first bracket entry every
+            # round" — both target ("milk carton") and container ("basket")
+            # then resolved to box 0 (alphabet soup), grasp and drop
+            # collapsed to the same XY, and the run reported SUCCESS with
+            # the wrong object. Raising routes the subgraph to its
+            # ``on_error: not_found`` exit, which is the correct outcome.
+            # We DO tag the first auth-class failure with a credentials
+            # hint before re-raising — without that the user sees only an
+            # opaque "Could not resolve authentication method..." trace.
             try:
                 resp = ctx.tool("vlm.query", prompt=prompt, image=sheet)
-                win = a if _parse_letter(resp["text"], 2) == 0 else b
-            except Exception as e:
-                logger.warning(
-                    "VLM pairwise compare failed (perceiving-objects): %s", e)
-                win = a
+            except Exception as exc:
+                _maybe_warn_auth_once(exc)
+                raise
+            win = a if _parse_letter(resp["text"], 2) == 0 else b
             nxt.append(win)
         bracket = nxt
     return keep[bracket[0]]
@@ -377,22 +455,22 @@ def _verify_pick(
             object_name, resp["answer"], str(resp["text"])[:200])
         return bool(resp["answer"])
     except Exception as first_exc:
+        # query_yes_no may be unavailable in a non-canonical vlm bundle;
+        # fall back to the lower-level vlm.query in that case. But if
+        # query ALSO fails — auth, network, retries exhausted — let it
+        # propagate. The dev-era silent ``return default`` masked missing
+        # credentials by handing the safe gate a synthetic "yes," which
+        # is exactly how the dev-era milk-vs-soup run logged SUCCESS with
+        # the wrong object.
         logger.warning(
             "verify_pick: vlm.query_yes_no failed (perceiving-objects), "
             "falling back to vlm.query: %s", first_exc)
-        try:
-            resp = ctx.tool("vlm.query",
-                            prompt=q + " Answer YES or NO.", image=img)
-            logger.info(
-                "verify_pick('%s') [query fallback]: text=%r",
-                object_name, str(resp["text"])[:200])
-            return resp["text"].strip().upper().startswith("Y")
-        except Exception as e:
-            logger.warning(
-                "verify_pick failed on BOTH vlm.query_yes_no and vlm.query "
-                "(perceiving-objects) — returning default=%s, the safe gate "
-                "will NOT get a real verification signal: %s", default, e)
-            return default
+        resp = ctx.tool("vlm.query",
+                        prompt=q + " Answer YES or NO.", image=img)
+        logger.info(
+            "verify_pick('%s') [query fallback]: text=%r",
+            object_name, str(resp["text"])[:200])
+        return resp["text"].strip().upper().startswith("Y")
 
 
 def _parse_letter(text: str, n: int) -> int:
@@ -459,20 +537,26 @@ def _perceive_single_camera(
 
         if gdino_detections:
             rgb_np = cam["rgb"]
-            try:
-                selected_idx = _tournament(
-                    ctx, rgb_np, gdino_detections,
-                    object_name, object_description,
-                )
-                logger.info(
-                    "VLM tournament selected box %d for '%s' from %d detections",
-                    selected_idx, object_name,
-                    min(len(gdino_detections), len(_LABELS)),
-                )
+            # Tournament errors (VLM auth/transport) MUST propagate — the
+            # dev-era catch here swallowed the inner raise and dropped
+            # through to segment_text, which produced a non-empty cloud
+            # for the WRONG object and the run reported success. Only
+            # catch sam3.segment_box errors (they have a legitimate
+            # fallback to segment_text below).
+            selected_idx = _tournament(
+                ctx, rgb_np, gdino_detections,
+                object_name, object_description,
+            )
+            logger.info(
+                "VLM tournament selected box %d for '%s' from %d detections",
+                selected_idx, object_name,
+                min(len(gdino_detections), len(_LABELS)),
+            )
 
-                if 0 <= selected_idx < len(gdino_detections):
-                    selected_det = gdino_detections[selected_idx]
-                    sel_box = selected_det["box"]
+            if 0 <= selected_idx < len(gdino_detections):
+                selected_det = gdino_detections[selected_idx]
+                sel_box = selected_det["box"]
+                try:
                     seg_resp = ctx.tool(
                         "sam3.segment_box",
                         image=cam["rgb"], box=selected_det["box"],
@@ -480,9 +564,10 @@ def _perceive_single_camera(
                     if seg_resp["masks"] and seg_resp["scores"]:
                         seg_mask = seg_resp["masks"][0]
                         seg_score = seg_resp["scores"][0]
-            except Exception as e:
-                logger.warning(
-                    "VLM tournament selection failed (perceiving-objects): %s", e)
+                except Exception as e:
+                    logger.warning(
+                        "sam3.segment_box failed (perceiving-objects); "
+                        "falling back to segment_text: %s", e)
 
     if seg_mask is None or seg_score < min_score:
         for prompt in text_prompts:
@@ -612,6 +697,31 @@ def _clouds_intersect(anchor_pts: np.ndarray, cloud: PointCloud) -> bool:
     logger.info("wrist-support intersection: %d points within %.0fmm",
                 n, _INTERSECTION_DIST * 1000)
     return n >= _MIN_INTERSECTION
+
+
+def _filter_wrist_to_anchor(
+    anchor_pts: np.ndarray, cloud: PointCloud,
+) -> np.ndarray:
+    """Return only the wrist points within ``_INTERSECTION_DIST`` of the
+    anchor — the corrected fusion semantics.
+
+    The original ``_collect_wrist_support`` used ``_clouds_intersect`` as
+    a binary all-or-nothing gate: if *any* wrist point intersected the
+    exterior cloud, the *entire* wrist cloud was fused. A low-score wrist
+    mask (e.g. score 0.535 on LIBERO milk-carton) that grazed the
+    exterior cloud could drag 1.6k off-target points (the table, a
+    neighboring soup can) into the fused cloud, shifting the OBB centroid
+    by 5+ cm in X and producing a top-down grasp that closed on empty
+    air. Restricting fusion to the actually-intersecting subset keeps
+    the wrist contribution where it agrees with the exterior view and
+    drops contamination."""
+    from scipy.spatial import cKDTree
+
+    pts = _cloud_pts(cloud)
+    if len(anchor_pts) == 0 or len(pts) == 0:
+        return np.zeros((0, 3), dtype=np.float64)
+    dists, _ = cKDTree(anchor_pts).query(pts)
+    return pts[dists < _INTERSECTION_DIST]
 
 
 def _segment_wrist_by_projection(
@@ -845,11 +955,29 @@ def _run_uncached(
                 if r is None:
                     continue
                 if _clouds_intersect(anchor_pts, r.cloud):
+                    # Fuse ONLY the intersected subset. See
+                    # `_filter_wrist_to_anchor` for the rationale — the
+                    # original "fuse the entire wrist cloud once any
+                    # intersection exists" let a low-score wrist mask
+                    # corrupt the OBB centroid (LIBERO milk-carton run
+                    # 20260616_012843: cloud X span 20 cm vs 8 cm true,
+                    # OBB offset → empty grasp).
+                    filtered_pts = _filter_wrist_to_anchor(
+                        anchor_pts, r.cloud)
+                    if len(filtered_pts) < _MIN_INTERSECTION:
+                        continue
+                    fused_cloud: PointCloud = {
+                        "points": filtered_pts.astype(np.float32),
+                    }
                     logger.info(
                         "wrist-support: fusing wrist view '%s' "
-                        "(%d points, score=%.3f)", wcam["name"],
+                        "(%d/%d points after intersect filter, score=%.3f)",
+                        wcam["name"], len(filtered_pts),
                         len(r.cloud["points"]), r.score)
-                    support.append(r)
+                    support.append(_CamResult(
+                        cloud=fused_cloud, mask=r.mask,
+                        score=r.score, box=r.box,
+                    ))
             except Exception as exc:  # noqa: BLE001 — support is best-effort
                 logger.warning(
                     "wrist-support: skipping wrist view '%s': %s",

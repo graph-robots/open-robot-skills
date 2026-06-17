@@ -35,6 +35,50 @@ logger = logging.getLogger(__name__)
 #: Torch device for both the image model and the video tracker.
 _DEVICE = os.environ.get("GAP_SAM3_DEVICE", "cuda")
 
+#: Hugging Face repo id for SAM3 weights (image + video predictors share
+#: the same checkpoint).  Must match upstream sam3/model_builder.py
+#: ``SAM3_MODEL_ID``; kept here so ``prefetch()`` doesn't have to import
+#: torch / sam3 just to read the constant.
+_SAM3_HF_REPO = "facebook/sam3"
+
+
+def weights_cached() -> bool | None:
+    """Filesystem-only weight-cache probe for ``gap check``.
+
+    Mirrors grounding-dino's check: looks for the SAM3 ``config.json``
+    in the HF cache without importing torch or sam3. Returns ``None``
+    when ``huggingface_hub`` isn't available ("unknown").
+    """
+    try:
+        from huggingface_hub import try_to_load_from_cache
+    except ImportError:
+        return None
+    try:
+        result = try_to_load_from_cache(_SAM3_HF_REPO, "config.json")
+    except Exception:
+        return None
+    return isinstance(result, str)
+
+
+def prefetch() -> None:
+    """Snapshot-download the SAM3 weights into the HF cache.
+
+    Called by ``gap skills check --download``. The SAM3 checkpoint is a
+    gated repo on Hugging Face — users must accept the model card terms
+    AND have a valid ``HF_TOKEN`` (or be logged in via ``huggingface-cli
+    login``). If either is missing, this raises with the same 401/403
+    HfHubHTTPError the lazy first-call path would raise, so the user
+    finds out at install time instead of mid-run.
+
+    Idempotent: a re-run against an already-cached snapshot is a
+    near-no-op (HF revision check + symlink refresh).
+    """
+    from huggingface_hub import snapshot_download
+
+    logger.info("[sam3] prefetching weights for %s ...", _SAM3_HF_REPO)
+    snapshot_download(repo_id=_SAM3_HF_REPO, repo_type="model")
+    logger.info("[sam3] prefetch complete (cached at HF default)")
+
 # Cap how many detections segment_text returns by default.  The model emits
 # one mask per detected instance — on cluttered scenes that can be ~200, each
 # ~1 MB at 1280x720 (uint8 0/255).  Most callers consume only ``masks[0]``.
