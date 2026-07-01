@@ -50,9 +50,8 @@ _AUTH_HINT = (
     "no LLM credentials for the vlm tool bundle — the VLM tournament will"
     " raise and the subgraph will route to its not_found exit. To enable"
     " VLM disambiguation, set one of:\n"
-    "    anthropic:  export ANTHROPIC_API_KEY=...\n"
-    "    vertex:     gcloud auth application-default login + export GOOGLE_CLOUD_PROJECT=...\n"
-    "    openai:     export OPENAI_API_KEY=...\n"
+    "    openrouter:  export OPENROUTER_API_KEY=...\n"
+    "    vertex:      gcloud auth application-default login + export GOOGLE_CLOUD_PROJECT=...\n"
     "  (or pin the bundle's own provider via GAP_VLM_PROVIDER /"
     " GAP_VLM_PROJECT_ID / GAP_VLM_BASE_URL).\n"
     "  Use `gap check` to see which providers are configured."
@@ -62,17 +61,19 @@ _AUTH_HINT = (
 def _looks_like_auth_error(exc: BaseException) -> bool:
     """True when the VLM call failed because no credentials were set.
 
-    Catches the anthropic SDK's request-build-time TypeError ('Could not
-    resolve authentication method'), typed AuthenticationError, and raw
-    401/Unauthorized responses from any upstream.
+    Provider-neutral: catches HTTP 401 / "unauthorized" from the
+    openrouter (OpenAI-compatible) endpoint, and the authentication /
+    credential errors the Vertex (google-genai) client raises when
+    Application Default Credentials are not configured.
     """
     msg = str(exc).lower()
     return (
-        "could not resolve authentication" in msg
-        or "authenticationerror" in type(exc).__name__.lower()
-        or " 401 " in f" {msg} "
+        " 401 " in f" {msg} "
         or "unauthorized" in msg
-        or "invalid x-api-key" in msg
+        or "authentication" in msg
+        or "credential" in msg
+        or "api key" in msg
+        or "api_key" in msg
     )
 
 
@@ -135,7 +136,7 @@ def _resolved_vlm_provider() -> str:
     return (
         os.environ.get("GAP_VLM_PROVIDER", "").strip().lower()
         or os.environ.get("GAP_LLM_PROVIDER", "").strip().lower()
-        or "anthropic"
+        or "openrouter"
     )
 
 
@@ -144,6 +145,7 @@ def _resolved_vlm_model() -> str:
     return (
         os.environ.get("GAP_VLM_MODEL", "").strip()
         or os.environ.get("GAP_LLM_MODEL", "").strip()
+        or "gemini-3.1-flash-lite-preview"
     )
 
 

@@ -39,9 +39,8 @@ _AUTH_HINT = (
     " perception is now using GDINO + geometric multiview intersection alone,"
     " which only disambiguates when objects are far apart. To enable VLM"
     " disambiguation, set one of:\n"
-    "    anthropic:  export ANTHROPIC_API_KEY=...\n"
-    "    vertex:     gcloud auth application-default login + export GOOGLE_CLOUD_PROJECT=...\n"
-    "    openai:     export OPENAI_API_KEY=...\n"
+    "    openrouter:  export OPENROUTER_API_KEY=...\n"
+    "    vertex:      gcloud auth application-default login + export GOOGLE_CLOUD_PROJECT=...\n"
     "  (or pin the bundle's own provider via GAP_VLM_PROVIDER / GAP_VLM_PROJECT_ID / GAP_VLM_BASE_URL).\n"
     "  Use `gap check` to see which providers are configured."
 )
@@ -50,22 +49,19 @@ _AUTH_HINT = (
 def _looks_like_auth_error(exc: BaseException) -> bool:
     """True when the VLM call failed because no credentials were set.
 
-    Catches the three shapes we've actually seen in the wild:
-
-    - ``TypeError("Could not resolve authentication method...")`` — the
-      anthropic SDK raises this at request-build time when neither
-      ``api_key`` nor a vertex ``credentials`` is set (no HTTP hit).
-    - ``anthropic.AuthenticationError`` — the SDK's typed 401 response.
-    - generic 401 / "unauthorized" strings from upstream errors that
-      slip through other paths.
+    Provider-neutral: catches HTTP 401 / "unauthorized" from the
+    openrouter (OpenAI-compatible) endpoint, and the authentication /
+    credential errors the Vertex (google-genai) client raises when
+    Application Default Credentials are not configured.
     """
     msg = str(exc).lower()
     return (
-        "could not resolve authentication" in msg
-        or "authenticationerror" in type(exc).__name__.lower()
-        or " 401 " in f" {msg} "
+        " 401 " in f" {msg} "
         or "unauthorized" in msg
-        or "invalid x-api-key" in msg
+        or "authentication" in msg
+        or "credential" in msg
+        or "api key" in msg
+        or "api_key" in msg
     )
 
 

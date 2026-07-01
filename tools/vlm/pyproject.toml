@@ -1,7 +1,7 @@
 [project]
 name = "vlm-tool-bundle"
 version = "0.1.0.dev0"
-description = "Hosted VLM (Anthropic) query tools for gap. Runs out-of-process via gap_core.rpc.server."
+description = "Hosted VLM (OpenRouter / Vertex) query tools for gap. Runs out-of-process via gap_core.rpc.server."
 readme = "SKILL.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -9,11 +9,8 @@ license = { text = "MIT" }
 dependencies = [
   # Tool-server entry point + @tool decorator + types/errors.
   "graph-as-policy-core",
-  # Vendored from gap-runtime's deps so the bundle's .venv has its own
-  # Anthropic client and HTTP transport without pulling in the rest of gap.
-  # `anthropic[vertex]` adds google-auth so AnthropicVertex can route
-  # claude-* via Vertex AI; matches the engine's [vertex] extra.
-  "anthropic[vertex]>=0.40",
+  # The openrouter provider speaks the OpenAI-compatible chat-completions
+  # protocol over httpx (no vendor SDK needed).
   "httpx>=0.27",
   # tools.py encodes images for the API payload.
   "pillow>=10",

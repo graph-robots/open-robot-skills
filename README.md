@@ -75,7 +75,7 @@ bundle's own `pyproject.toml`), environment variables, weights, and quirks.
 | [grounding-dino](tools/grounding-dino/) | Grounding DINO zero-shot object detection — natural-language queries to labeled 2D bounding boxes with confidence scores. | `grounding-dino.detect` | `open-robot-skills[grounding-dino]` |
 | [molmo](tools/molmo/) | Visual pointing and Q&A via the Molmo VLM served from a self-hosted vLLM endpoint (OpenAI-compatible API). | `molmo.point_prompt`, `molmo.query`, `molmo.query_yes_no` | `open-robot-skills[molmo]` |
 | [sam3](tools/sam3/) | Segment Anything 3 — text-, point-, and box-prompted instance segmentation, plus a stateful streaming video tracker that carries object identity through SAM3's memory bank. | `sam3.segment_box`, `sam3.segment_point`, `sam3.segment_text`, `sam3.tracker_close`, `sam3.tracker_init`, `sam3.tracker_update` | `open-robot-skills[sam3]` |
-| [vlm](tools/vlm/) | Free-form and yes/no visual question answering against a hosted vision-language model (Anthropic API by default; OpenAI-compatible endpoints and Vertex AI selectable by config). | `vlm.query`, `vlm.query_yes_no` | `open-robot-skills[vlm]` |
+| [vlm](tools/vlm/) | Free-form and yes/no visual question answering against a hosted vision-language model (OpenRouter API by default; Vertex AI Gemini selectable by config). | `vlm.query`, `vlm.query_yes_no` | `open-robot-skills[vlm]` |
 
 Both tables are generated — regenerate after adding a bundle:
 

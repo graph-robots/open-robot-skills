@@ -12,3 +12,4 @@ MUJOCO_LOG.TXT
 
 # Checkout-local LLM response cache (perceiving-objects script default)
 .llm_cache/
+curobo_debug/

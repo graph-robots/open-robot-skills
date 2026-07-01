@@ -1,10 +1,10 @@
 ---
 name: vlm
 description: Free-form and yes/no visual question answering against a hosted
-  vision-language model (Anthropic API by default; OpenAI-compatible endpoints
-  and Vertex AI selectable by config). Use when a workflow needs scene
-  descriptions, semantic checks ("is the drawer open?"), or LLM-judged
-  verification of a camera frame — no GPU required.
+  vision-language model (OpenRouter API by default; Vertex AI Gemini
+  selectable by config). Use when a workflow needs scene descriptions,
+  semantic checks ("is the drawer open?"), or LLM-judged verification of a
+  camera frame — no GPU required.
 license: MIT
 compatibility: requires gap>=0.1
 metadata: {category: perception, tags: [perception, vlm, api]}
@@ -17,9 +17,9 @@ gap:
   # RESOLVED config — use them to verify the bundle will dispatch where
   # you expect.
   requires: {env_any: [
-    ANTHROPIC_API_KEY,
-    GAP_VLM_BASE_URL, GAP_VLM_PROJECT_ID,
-    GAP_LLM_PROVIDER, GOOGLE_CLOUD_PROJECT, ANTHROPIC_VERTEX_PROJECT_ID,
+    OPENROUTER_API_KEY, GAP_VLM_API_KEY, GAP_VLM_BASE_URL,
+    GAP_VLM_PROJECT_ID, GOOGLE_CLOUD_PROJECT,
+    GAP_LLM_PROVIDER,
   ]}
   serving:
     command: ["python", "-m", "gap_core.rpc.server", "--bundle", "vlm"]
@@ -37,16 +37,15 @@ on the wire.
 
 ## Providers
 
-Selected by `GAP_VLM_PROVIDER` (default `anthropic`); each tool also accepts
+Selected by `GAP_VLM_PROVIDER` (default `openrouter`); each tool also accepts
 a per-call `provider=` override.
 
-| Provider    | Backend                                            | Config (env)                                              |
-|-------------|----------------------------------------------------|-----------------------------------------------------------|
-| `anthropic` | Anthropic messages API (gap core dependency)       | `ANTHROPIC_API_KEY`; `GAP_VLM_MODEL` (default `claude-opus-4-8`, see `DEFAULT_ANTHROPIC_MODEL` in `tools.py`) |
-| `openai`    | Any OpenAI-compatible chat-completions endpoint    | `GAP_VLM_BASE_URL`, `GAP_VLM_API_KEY`, `GAP_VLM_MODEL`    |
-| `vertex`    | Vertex AI direct (AnthropicVertex / google-genai)  | `GAP_VLM_MODEL`, `GAP_VLM_PROJECT_ID`, `GAP_VLM_REGION`   |
+| Provider     | Backend                                             | Config (env)                                              |
+|--------------|-----------------------------------------------------|-----------------------------------------------------------|
+| `openrouter` | OpenRouter's OpenAI-compatible chat-completions API | `OPENROUTER_API_KEY` (or `GAP_VLM_API_KEY`); `GAP_VLM_MODEL` (default `gemini-3.1-flash-lite-preview`, see `DEFAULT_MODEL` in `tools.py`); set `GAP_VLM_BASE_URL` to point at another OpenAI-compatible server (e.g. a local vLLM) |
+| `vertex`     | Vertex AI via google-genai (Gemini models)          | `GAP_VLM_MODEL`, `GAP_VLM_PROJECT_ID`, `GAP_VLM_REGION`   |
 
-The `vertex` provider lazy-imports its SDKs — install the engine's vertex
+The `vertex` provider lazy-imports google-genai — install the engine's vertex
 extra first: `pip install "graph-as-policy[vertex]"`.
 
 ## When to use
@@ -61,4 +60,4 @@ extra first: `pip install "graph-as-policy[vertex]"`.
 - `vlm.query_yes_no` coerces with the source-verbatim rule: answer is true
   iff `"yes"` appears in the lowercased reply.
 - Requests carry no system prompt and no temperature knob (mirrors the
-  original `vlm.v1` proto); the `openai` path pins `temperature: 0.0`.
+  original `vlm.v1` proto); both providers pin `temperature: 0.0`.

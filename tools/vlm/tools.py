@@ -6,7 +6,7 @@ context frames in one request). The tool signatures deliberately expose no
 system prompt and no temperature knob — prompts are self-contained and
 sampling is pinned for determinism.
 
-Providers — selected by ``GAP_VLM_PROVIDER`` (default ``"anthropic"``); a
+Providers — selected by ``GAP_VLM_PROVIDER`` (default ``"openrouter"``); a
 per-call ``provider=`` kwarg overrides the env. Every ``GAP_VLM_*`` knob
 inherits from the matching ``GAP_LLM_*`` / google-SDK env var when unset
 (see :func:`_resolve_provider`, :func:`_resolve_model`,
@@ -15,32 +15,25 @@ user who configures the agent's LLM doesn't have to re-configure the VLM
 bundle separately. Set ``GAP_VLM_*`` explicitly only to route the VLM to
 a different provider/model than the agent.
 
-- ``anthropic`` — Anthropic messages API (the ``anthropic`` SDK is a gap core
-  dependency). Model from ``GAP_VLM_MODEL`` (else ``GAP_LLM_MODEL`` else
-  :data:`DEFAULT_ANTHROPIC_MODEL`). API key via the SDK's default
-  resolution (``ANTHROPIC_API_KEY``).
-- ``openai`` — any OpenAI-compatible chat-completions endpoint (Gemini proxy,
-  GPT-4o, local vLLM); the source's proxy path ported verbatim (data-URL
-  image blocks, ``temperature: 0.0``, 3 retries with exponential backoff).
-  Config: ``GAP_VLM_BASE_URL`` + ``GAP_VLM_API_KEY`` + ``GAP_VLM_MODEL``.
-- ``vertex`` — Vertex AI direct: ``AnthropicVertex`` for ``claude-*`` models,
-  ``google-genai`` for Gemini models. Lazy imports; install the vertex extra
+- ``openrouter`` (default) — OpenRouter's OpenAI-compatible
+  chat-completions API (data-URL image blocks, ``temperature: 0.0``, 3
+  retries with exponential backoff). Base URL defaults to
+  ``https://openrouter.ai/api/v1`` (override with ``GAP_VLM_BASE_URL`` for
+  any other OpenAI-compatible server, e.g. a local vLLM). Key from
+  ``GAP_VLM_API_KEY`` (else ``OPENROUTER_API_KEY``); model from
+  ``GAP_VLM_MODEL`` (else ``GAP_LLM_MODEL`` else :data:`DEFAULT_MODEL`).
+- ``vertex`` — Vertex AI via ``google-genai`` (Gemini models). Lazy
+  import; install the vertex extra
   (``pip install "graph-as-policy[vertex]"``). Config:
-  ``GAP_VLM_MODEL`` (else ``GAP_LLM_MODEL``) +
-  ``GAP_VLM_PROJECT_ID`` (else ``GOOGLE_CLOUD_PROJECT`` else
-  ``ANTHROPIC_VERTEX_PROJECT_ID``) +
+  ``GAP_VLM_MODEL`` (else ``GAP_LLM_MODEL`` else :data:`DEFAULT_MODEL`) +
+  ``GAP_VLM_PROJECT_ID`` (else ``GOOGLE_CLOUD_PROJECT``) +
   ``GAP_VLM_REGION`` (else ``GOOGLE_CLOUD_REGION`` else
   ``GOOGLE_CLOUD_LOCATION`` else ``"global"``).
 
-Generation config: the dev servicer's proxy path pinned ``temperature: 0.0``
-+ ``max_tokens: 1024`` with 3 retries, while its vertex path left the SDK
-default temperature — perception callers (the pairwise tournament, the
+Generation config: perception callers (the pairwise tournament, the
 yes/no verify gate) are binary judgments that depend on deterministic
-decoding, so this port pins temperature 0.0 + max_tokens 1024 on ALL
-providers and gives the vertex Gemini path the same retry/backoff as the
-openai path. (The original port had the vertex path at the SDK default
-temperature ~1.0, which made tournament picks and verify answers
-nondeterministic and verbose.)
+decoding, so both providers pin ``temperature: 0.0`` + ``max_tokens:
+1024`` with 3 retries + exponential backoff.
 
 All functions are synchronous — the gap runtime is threaded, not async.
 """
@@ -63,13 +56,15 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-#: Default model for the ``anthropic`` provider. Override per-call with
-#: ``model=`` or globally with the ``GAP_VLM_MODEL`` env var.
-DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8"
+#: Default model when none is resolved (used by both providers). Override
+#: per-call with ``model=`` or globally with ``GAP_VLM_MODEL`` /
+#: ``GAP_LLM_MODEL``. On ``openrouter`` the slug may need a ``google/``
+#: prefix depending on the account.
+DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
 
 #: Provider used when neither ``provider=`` nor ``GAP_VLM_PROVIDER`` nor
 #: ``GAP_LLM_PROVIDER`` is set.
-DEFAULT_PROVIDER = "anthropic"
+DEFAULT_PROVIDER = "openrouter"
 
 
 def _envstr(name: str) -> str:
@@ -93,30 +88,29 @@ def _resolve_provider(provider: str | None) -> str:
 
 
 def _resolve_model(model: str | None) -> str:
-    """Per-call override > ``GAP_VLM_MODEL`` > ``GAP_LLM_MODEL``; empty
-    string when nothing is set so provider-default paths can fire."""
+    """Per-call override > ``GAP_VLM_MODEL`` > ``GAP_LLM_MODEL`` >
+    :data:`DEFAULT_MODEL`."""
     return (
         (model or "").strip()
         or _envstr("GAP_VLM_MODEL")
         or _envstr("GAP_LLM_MODEL")
+        or DEFAULT_MODEL
     )
 
 
 def _resolve_vertex_project() -> str:
     """``GAP_VLM_PROJECT_ID`` > ``GOOGLE_CLOUD_PROJECT`` (the documented
-    google-genai knob) > ``ANTHROPIC_VERTEX_PROJECT_ID`` (the Anthropic
-    SDK's vertex knob). Empty string when unset — the caller raises with
+    google-genai knob). Empty string when unset — the caller raises with
     the install hint."""
     return (
         _envstr("GAP_VLM_PROJECT_ID")
         or _envstr("GOOGLE_CLOUD_PROJECT")
-        or _envstr("ANTHROPIC_VERTEX_PROJECT_ID")
     )
 
 
 def _resolve_vertex_region() -> str:
     """``GAP_VLM_REGION`` > ``GOOGLE_CLOUD_REGION`` > ``GOOGLE_CLOUD_LOCATION``
-    > ``"global"`` (the documented default for Anthropic-on-Vertex)."""
+    > ``"global"`` (the documented Vertex default)."""
     return (
         _envstr("GAP_VLM_REGION")
         or _envstr("GOOGLE_CLOUD_REGION")
@@ -178,42 +172,7 @@ def _gather_images(
 
 
 # ---------------------------------------------------------------------------
-# Provider: anthropic (default)
-# ---------------------------------------------------------------------------
-
-
-def _anthropic_blocks(prompt: str, images: list[np.ndarray]) -> list[dict]:
-    """Anthropic content blocks: image blocks first, then the text prompt."""
-    blocks: list[dict] = []
-    for arr in images:
-        blocks.append({
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": "image/png",
-                "data": _png_b64(arr),
-            },
-        })
-    blocks.append({"type": "text", "text": prompt})
-    return blocks
-
-
-def _query_anthropic(prompt: str, images: list[np.ndarray], model: str | None) -> str:
-    import anthropic
-
-    client = anthropic.Anthropic()
-    response = client.messages.create(
-        model=_resolve_model(model) or DEFAULT_ANTHROPIC_MODEL,
-        max_tokens=_MAX_TOKENS,
-        temperature=_TEMPERATURE,
-        messages=[{"role": "user", "content": _anthropic_blocks(prompt, images)}],
-    )
-    block = response.content[0]
-    return block.text if hasattr(block, "text") else str(block)
-
-
-# ---------------------------------------------------------------------------
-# Provider: openai (any OpenAI-compatible chat-completions endpoint)
+# Provider: openrouter (OpenRouter's OpenAI-compatible chat-completions API)
 # ---------------------------------------------------------------------------
 
 
@@ -222,24 +181,10 @@ def _http_client() -> httpx.Client:
     return httpx.Client(timeout=httpx.Timeout(120.0, connect=10.0))
 
 
-def _query_openai(prompt: str, images: list[np.ndarray], model: str | None) -> str:
-    base_url = os.environ.get("GAP_VLM_BASE_URL", "")
-    if not base_url:
-        raise ToolError(
-            "vlm",
-            "GAP_VLM_BASE_URL is not set; the 'openai' provider needs an "
-            "OpenAI-compatible chat-completions endpoint "
-            "(e.g. http://localhost:8000/v1)",
-        )
+def _query_openrouter(prompt: str, images: list[np.ndarray], model: str | None) -> str:
+    base_url = _envstr("GAP_VLM_BASE_URL") or "https://openrouter.ai/api/v1"
     model = _resolve_model(model)
-    if not model:
-        raise ToolError(
-            "vlm",
-            "no model set; the 'openai' provider needs the model name "
-            "served at GAP_VLM_BASE_URL (set GAP_VLM_MODEL, or "
-            "GAP_LLM_MODEL — VLM inherits from LLM when unset)",
-        )
-    api_key = os.environ.get("GAP_VLM_API_KEY", "")
+    api_key = _envstr("GAP_VLM_API_KEY") or _envstr("OPENROUTER_API_KEY")
     chat_url = f"{base_url.rstrip('/')}/chat/completions"
 
     content: list[dict] = [{"type": "text", "text": prompt}]
@@ -280,7 +225,7 @@ def _query_openai(prompt: str, images: list[np.ndarray], model: str | None) -> s
 
 
 # ---------------------------------------------------------------------------
-# Provider: vertex (AnthropicVertex for claude-*, google-genai for gemini)
+# Provider: vertex (google-genai; Gemini models only)
 # ---------------------------------------------------------------------------
 
 
@@ -291,80 +236,57 @@ def _is_claude_model(model: str) -> bool:
 
 def _query_vertex(prompt: str, images: list[np.ndarray], model: str | None) -> str:
     model = _resolve_model(model)
-    if not model:
+    if _is_claude_model(model):
         raise ToolError(
             "vlm",
-            "no model set; the 'vertex' provider needs a model name to "
-            "route between AnthropicVertex (claude-*) and google-genai "
-            "(gemini). Set GAP_VLM_MODEL, or GAP_LLM_MODEL — VLM inherits "
-            "from LLM when unset.",
+            f"vertex serves Gemini models only (got {model!r}); "
+            "Claude-on-Vertex was removed with the anthropic dependency. "
+            "Use a gemini-* model, or route Claude via the openrouter provider.",
         )
     project_id = _resolve_vertex_project()
     region = _resolve_vertex_region()
 
-    if _is_claude_model(model):
-        try:
-            from anthropic import AnthropicVertex
-        except ImportError as exc:
-            raise ToolError(
-                "vlm",
-                "anthropic.lib.vertex (AnthropicVertex) is not available "
-                "in the vlm bundle's venv — the bundle pins anthropic>=0.40 "
-                "which ships it. Re-sync: "
-                "`uv sync --project open-robot-skills/tools/vlm`.",
-            ) from exc
-
-        client = AnthropicVertex(project_id=project_id, region=region)
-        response = client.messages.create(
-            model=model,
-            max_tokens=_MAX_TOKENS,
-            temperature=_TEMPERATURE,
-            messages=[{"role": "user", "content": _anthropic_blocks(prompt, images)}],
-        )
-        block = response.content[0]
-        return block.text if hasattr(block, "text") else str(block)
-    else:
-        try:
-            from google import genai
-            from google.genai import types
-        except ImportError as exc:
-            raise ToolError(
-                "vlm",
-                "google-genai is not installed in the vlm bundle's venv "
-                "(needed to route gemini-* via Vertex). Re-sync the bundle: "
-                "`uv sync --project open-robot-skills/tools/vlm` "
-                "(google-genai is declared in tools/vlm/pyproject.toml).",
-            ) from exc
-
-        client = genai.Client(vertexai=True, project=project_id, location=region)
-        parts: list = [prompt]
-        for arr in images:
-            parts.append(types.Part.from_bytes(
-                data=base64.b64decode(_png_b64(arr)), mime_type="image/png",
-            ))
-        config = types.GenerateContentConfig(
-            temperature=_TEMPERATURE, max_output_tokens=_MAX_TOKENS,
-        )
-        last_exc: Exception | None = None
-        for attempt in range(_MAX_RETRIES):
-            try:
-                response = client.models.generate_content(
-                    model=model, contents=parts, config=config,
-                )
-                return response.text or ""
-            except Exception as exc:  # noqa: BLE001 — transient API errors
-                last_exc = exc
-                logger.warning(
-                    "VLM vertex request failed (attempt %d/%d, model=%s): %s",
-                    attempt + 1, _MAX_RETRIES, model, exc,
-                )
-                if attempt < _MAX_RETRIES - 1:
-                    time.sleep(_BACKOFF_S * (2 ** attempt))
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError as exc:
         raise ToolError(
             "vlm",
-            f"vertex backend unavailable after {_MAX_RETRIES} attempts: "
-            f"model={model}, error={last_exc}",
-        )
+            "google-genai is not installed in the vlm bundle's venv "
+            "(needed to route gemini-* via Vertex). Re-sync the bundle: "
+            "`uv sync --project open-robot-skills/tools/vlm` "
+            "(google-genai is declared in tools/vlm/pyproject.toml).",
+        ) from exc
+
+    client = genai.Client(vertexai=True, project=project_id, location=region)
+    parts: list = [prompt]
+    for arr in images:
+        parts.append(types.Part.from_bytes(
+            data=base64.b64decode(_png_b64(arr)), mime_type="image/png",
+        ))
+    config = types.GenerateContentConfig(
+        temperature=_TEMPERATURE, max_output_tokens=_MAX_TOKENS,
+    )
+    last_exc: Exception | None = None
+    for attempt in range(_MAX_RETRIES):
+        try:
+            response = client.models.generate_content(
+                model=model, contents=parts, config=config,
+            )
+            return response.text or ""
+        except Exception as exc:  # noqa: BLE001 — transient API errors
+            last_exc = exc
+            logger.warning(
+                "VLM vertex request failed (attempt %d/%d, model=%s): %s",
+                attempt + 1, _MAX_RETRIES, model, exc,
+            )
+            if attempt < _MAX_RETRIES - 1:
+                time.sleep(_BACKOFF_S * (2 ** attempt))
+    raise ToolError(
+        "vlm",
+        f"vertex backend unavailable after {_MAX_RETRIES} attempts: "
+        f"model={model}, error={last_exc}",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -373,8 +295,7 @@ def _query_vertex(prompt: str, images: list[np.ndarray], model: str | None) -> s
 
 
 _PROVIDERS = {
-    "anthropic": _query_anthropic,
-    "openai": _query_openai,
+    "openrouter": _query_openrouter,
     "vertex": _query_vertex,
 }
 
@@ -421,7 +342,7 @@ def query(
         prompt: Free-form question.
         image: Optional uint8 [H, W, 3] RGB context image.
         images: Optional additional context images (same dtype/shape).
-        provider: Per-call provider override (``anthropic``/``openai``/``vertex``).
+        provider: Per-call provider override (``openrouter``/``vertex``).
         model: Per-call model override.
 
     Returns:
