@@ -19,6 +19,8 @@ fingers never ram the table — see ``_BASE_CLEARANCE``.
 import logging
 from typing import TypedDict
 
+import numpy as np
+
 from gap import NodeContext
 from gap_core.types import OrientedBoundingBox, Se3Pose
 
@@ -81,6 +83,97 @@ def _descend_linear(ctx: NodeContext, target_z: float, from_z: float,
         _cartesian(ctx, ee["x"], ee["y"], target_z, rotation)
 
 
+def _refine_xy_at_hover(
+    ctx: NodeContext, gx: float, gy: float,
+    target_obb: OrientedBoundingBox,
+) -> tuple[float, float]:
+    """Re-center the grasp XY from the wrist camera at hover.
+
+    One-sided exterior views bias the perceived OBB center toward the
+    visible face (a milk carton read ~7 mm off-center with half its true
+    depth) so the top-down pinch lands visibly off the centerline. At
+    hover the eye-in-hand camera looks straight down at the object's TOP
+    face — the one unbiased view — so segment the object under the
+    camera and re-center on its top-slab centroid. Best-effort: any
+    failure keeps the OBB-derived point."""
+    try:
+        obs = ctx.tool("robot.get_observation")
+        cams = obs.get("cameras") or []
+        if isinstance(cams, dict):
+            cams = list(cams.values())
+        cam = next(
+            (c for c in cams if "eye_in_hand" in (c.get("name") or "")), None,
+        )
+        if cam is None:
+            return gx, gy
+        depth = np.asarray(cam["depth"])
+        H, W = depth.shape[:2]
+        # Seed pixel = the expected object TOP projected into the wrist
+        # camera. The eye-in-hand optical axis is OFFSET from the TCP, so
+        # the object is not at the image centre — a centre seed segments
+        # the table instead (measured: 45k-point flat segment).
+        c, e = target_obb["center"], target_obb["extent"]
+        top_w = np.array([gx, gy, float(c["z"]) + float(e["z"])])
+        q = cam["pose"]["rotation"]
+        w_, x_, y_, z_ = (float(q[k]) for k in ("w", "x", "y", "z"))
+        R = np.array([
+            [1 - 2 * (y_ * y_ + z_ * z_), 2 * (x_ * y_ - z_ * w_), 2 * (x_ * z_ + y_ * w_)],
+            [2 * (x_ * y_ + z_ * w_), 1 - 2 * (x_ * x_ + z_ * z_), 2 * (y_ * z_ - x_ * w_)],
+            [2 * (x_ * z_ - y_ * w_), 2 * (y_ * z_ + x_ * w_), 1 - 2 * (x_ * x_ + y_ * y_)],
+        ])
+        t = cam["pose"]["position"]
+        p_cam = R.T @ (top_w - np.array([float(t["x"]), float(t["y"]), float(t["z"])]))
+        if p_cam[2] <= 0.01:
+            return gx, gy
+        K = np.asarray(cam["intrinsics"], dtype=np.float64)
+        u = K[0, 0] * p_cam[0] / p_cam[2] + K[0, 2]
+        v = K[1, 1] * p_cam[1] / p_cam[2] + K[1, 2]
+        if not (0 <= u < W and 0 <= v < H):
+            return gx, gy
+        seg = ctx.tool(
+            "sam3.segment_point",
+            image=cam["rgb"], pixel_x=float(u), pixel_y=float(v),
+        )
+        if not seg.get("masks"):
+            return gx, gy
+        cloud = ctx.tool(
+            "geometry.mask_to_world_points",
+            mask=seg["masks"][0], depth=cam["depth"],
+            intrinsics=cam["intrinsics"], camera_pose=cam["pose"],
+        )["points"]
+        pts = np.asarray(cloud["points"], dtype=np.float64).reshape(-1, 3)
+        if len(pts) < 30:
+            return gx, gy
+        # Table rejection: an object segment is compact; a table segment
+        # spans the workspace.
+        if (pts[:, 0].max() - pts[:, 0].min() > 0.25
+                or pts[:, 1].max() - pts[:, 1].min() > 0.25):
+            return gx, gy
+        z_hi = float(np.percentile(pts[:, 2], 95.0))
+        slab = pts[pts[:, 2] > z_hi - 0.02]
+        if len(slab) < 15:
+            return gx, gy
+        cx, cy = float(slab[:, 0].mean()), float(slab[:, 1].mean())
+        # Sanity: the refined center must stay within the target's OBB
+        # footprint (+3 cm) — otherwise the segmenter latched onto a
+        # neighbour and the original point is safer.
+        c, e = target_obb["center"], target_obb["extent"]
+        if (abs(cx - float(c["x"])) > float(e["x"]) + 0.03
+                or abs(cy - float(c["y"])) > float(e["y"]) + 0.03):
+            return gx, gy
+        if abs(cx - gx) < 0.003 and abs(cy - gy) < 0.003:
+            return gx, gy
+        logger.info(
+            "[grasp] wrist hover re-center: (%.3f, %.3f) -> (%.3f, %.3f) "
+            "(d = %.0f, %.0f mm)", gx, gy, cx, cy,
+            (cx - gx) * 1000, (cy - gy) * 1000,
+        )
+        return cx, cy
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[grasp] hover re-center skipped: %s", exc)
+        return gx, gy
+
+
 def _cartesian_grasp(ctx: NodeContext, grasp_pose: Se3Pose,
                      target_obb: OrientedBoundingBox, hover_z: float) -> None:
     """Fast path: rise → XY over object (rotating to the grasp yaw) → descend.
@@ -108,6 +201,9 @@ def _cartesian_grasp(ctx: NodeContext, grasp_pose: Se3Pose,
     cur = ctx.tool("robot.get_ee_pose")["pose"]["position"]
     _cartesian(ctx, cur["x"], cur["y"], hover_z, _DOWN)   # Seg 0: rise to hover (keep down)
     _cartesian(ctx, gx, gy, hover_z, rot)                 # Seg 1: XY over object + rotate to grasp yaw
+    rx, ry = _refine_xy_at_hover(ctx, gx, gy, target_obb)  # Seg 1b: wrist top-down re-center (best-effort)
+    if abs(rx - gx) > 0.003 or abs(ry - gy) > 0.003:
+        _cartesian(ctx, rx, ry, hover_z, rot)
     _descend_linear(ctx, grasp_z, hover_z, rot)           # Seg 2: descend INTO it (clamped; LOCK keeps yaw)
 
 

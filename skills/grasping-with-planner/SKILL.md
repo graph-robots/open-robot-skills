@@ -14,6 +14,8 @@ gap:
   allowed_tools:
     - geometry.top_down_grasp_candidates
     - geometry.build_world_config
+    - geometry.mask_to_world_points
+    - sam3.segment_point
     - robot.get_observation
     - robot.get_ee_pose
     - robot.go_to_pose_cartesian

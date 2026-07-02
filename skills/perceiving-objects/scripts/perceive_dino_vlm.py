@@ -110,7 +110,7 @@ _MIN_INTERSECTION = 1
 # both the tournament and the verify to the cup/tub-shaped alphabet-soup can,
 # so perception returned the wrong object. Name-only is the validated
 # 99.5%-ID behavior; ID keys on object_name only now.
-_CACHE_VERSION = "12"  # support-plane completion
+_CACHE_VERSION = "14"
 _CACHE_ENABLED = os.environ.get("GAP_PERCEPTION_CACHE", "1") == "1"
 # Default to checkout-local .llm_cache/perceiving-objects/ so cache is
 # per-checkout and easy to wipe. Override with GAP_PERCEPTION_CACHE_DIR.
@@ -636,6 +636,81 @@ def _perceive_single_camera(
 
 
 # ---------------------------------------------------------------------------
+# Static-container anchoring (loop reperception hygiene)
+# ---------------------------------------------------------------------------
+# In a pack-all loop the container is re-perceived every pass, and the
+# items already placed in/on it bleed into its segmentation: the basket
+# OBB center drifted +2 cm then +4 cm over one episode, dragging every
+# subsequent drop toward the rim. The container is STATIC, so the first
+# clean sighting's XY envelope is authoritative: later sightings drop
+# cloud points outside it (+ margin). Keyed per-process like the
+# decide_next_item progress guard (one episode == one PID).
+_CONTAINER_WORDS = (
+    "basket", "bin", "box", "container", "tote", "crate", "bowl", "tray",
+    "plate",
+)
+_CONTAINER_ENV_MARGIN_M = 0.015
+
+
+def _static_container_anchor(object_name: str, out):
+    if not out.get("found"):
+        return out
+    name = (object_name or "").lower()
+    if not any(w in name for w in _CONTAINER_WORDS):
+        return out
+    try:
+        pts = np.asarray(out["cloud"]["points"], dtype=np.float64).reshape(-1, 3)
+        if len(pts) < 30:
+            return out
+        safe = "".join(ch if ch.isalnum() else "_" for ch in name)[:40]
+        path = f"/tmp/.gap_container_cloud_{os.getpid()}_{safe}.npz"
+        centroid = pts.mean(axis=0)
+        cached = None
+        try:
+            d = np.load(path)
+            cached = d["points"]
+        except Exception:
+            pass
+        if cached is not None:
+            drift = float(np.linalg.norm(
+                centroid[:2] - np.asarray(cached, dtype=np.float64).mean(axis=0)[:2]
+            ))
+            if drift < 0.06:
+                # Same (static) container: reuse the FIRST clean sighting's
+                # cloud verbatim. Contents placed in/on it bleed into later
+                # masks — the downstream cluster filter then locks onto a
+                # wall+pile SUBSET and the OBB center walks toward the pile
+                # (+2 then +4 cm over one episode), dragging every drop
+                # toward the rim. Point-level filtering cannot fix a subset
+                # bias; cloud reuse can, and the 6 cm drift gate still
+                # refreshes if the container was actually moved.
+                anchored = dict(out)
+                cloud = dict(out["cloud"])
+                cloud["points"] = np.asarray(cached, dtype=np.float32)
+                cloud.pop("colors", None)
+                anchored["cloud"] = cloud
+                logger.info(
+                    "static-container anchor '%s': reusing first-sighting "
+                    "cloud (new sighting drifted %.0f mm)",
+                    object_name, drift * 1000,
+                )
+                return anchored
+            logger.info(
+                "static-container anchor '%s': %.0f mm drift exceeds the "
+                "moved-container gate; refreshing the cached cloud",
+                object_name, drift * 1000,
+            )
+        try:
+            np.savez_compressed(path, points=pts.astype(np.float32))
+        except Exception:
+            pass
+        return out
+    except Exception as exc:
+        logger.warning("static-container anchor skipped: %s", exc)
+        return out
+
+
+# ---------------------------------------------------------------------------
 # Amodal bottom completion (low-profile objects)
 # ---------------------------------------------------------------------------
 # A top-down view of a low object (the 2 cm cream-cheese / butter boxes)
@@ -669,40 +744,72 @@ def _extend_cloud_to_support(ctx, cloud, seg_mask, cam):
         ).reshape(-1, 3)
         if len(ring_pts) < 50:
             return cloud
-        support_z = float(np.percentile(ring_pts[:, 2], 20.0))
-        z_med = float(np.median(pts[:, 2]))
-        # Median, not min: segmentation bleed puts a few table pixels in
-        # the object mask, so min-z sits at the support height even when
-        # the whole visible surface is a floating top face.
-        gap = z_med - support_z
-        if gap < _SUPPORT_GAP_MIN_M:
+        z = pts[:, 2]
+        z_hi = float(np.percentile(z, 98.0))
+        z_lo = float(z.min())
+        # TOP SLAB: the one surface a tabletop camera sees completely, so
+        # its footprint is an unbiased estimate of the object's
+        # cross-section. A one-sided view biases the FULL cloud's centroid
+        # toward the camera (a milk carton read +7 mm off-center with half
+        # its true depth); the slab centroid stays true.
+        slab_band = max(0.012, 0.15 * (z_hi - z_lo))
+        slab = pts[z > z_hi - slab_band]
+        if len(slab) < 15:
             return cloud
-        sel_idx = np.arange(len(pts))
+        centroid_bias = float(
+            np.linalg.norm(slab[:, :2].mean(axis=0) - pts[:, :2].mean(axis=0))
+        )
+        # Complete column + unbiased -> nothing to fix, skip the ring call.
+        if centroid_bias < 0.004 and (z_hi - z_lo) > 0.03:
+            return cloud
+        from scipy import ndimage
+        m = np.asarray(seg_mask) > 0
+        ring = ndimage.binary_dilation(m, iterations=_SUPPORT_RING_PX) & ~m
+        ring_resp = ctx.tool(
+            "geometry.mask_to_world_points",
+            mask=(ring.astype(np.uint8) * 255), depth=cam["depth"],
+            intrinsics=cam["intrinsics"], camera_pose=cam["pose"],
+        )["points"]
+        ring_pts = np.asarray(
+            ring_resp["points"], dtype=np.float64
+        ).reshape(-1, 3)
+        support_z = (
+            float(np.percentile(ring_pts[:, 2], 20.0))
+            if len(ring_pts) >= 50 else z_lo
+        )
+        floating = (float(np.median(z)) - support_z) >= _SUPPORT_GAP_MIN_M
+        if centroid_bias < 0.004 and not floating:
+            return cloud
+        sel_idx = np.arange(len(slab))
         if len(sel_idx) > _SUPPORT_MAX_SYNTH:
             sel_idx = np.linspace(
-                0, len(pts) - 1, _SUPPORT_MAX_SYNTH
+                0, len(slab) - 1, _SUPPORT_MAX_SYNTH
             ).astype(int)
-        # A vertical curtain (not one detached bottom slab) so the
-        # downstream DBSCAN noise filter sees a single connected cluster
-        # and keeps the completion.
-        base = pts[sel_idx]
+        base = slab[sel_idx]
+        lo_lv = support_z + 0.002
+        hi_lv = max(z_hi - 0.004, lo_lv + 0.001)
+        n_lv = max(2, min(12, int((hi_lv - lo_lv) / 0.005)))
+        # Extrude the slab footprint from the support plane up to the slab:
+        # a connected prism (DBSCAN keeps it) that can only GROW the OBB
+        # toward the true shape — complete clouds gain nothing.
         layers = [pts]
-        for lv in np.linspace(support_z + 0.002, z_med, 4)[:-1]:
+        for lv in np.linspace(lo_lv, hi_lv, n_lv):
             layer = base.copy()
             layer[:, 2] = lv
             layers.append(layer)
         out = dict(cloud)
         out["points"] = np.concatenate(layers, axis=0).astype(np.float32)
-        colors = out.get("colors")
-        if colors is not None and len(colors) == len(pts):
-            colors = np.asarray(colors, dtype=np.float32).reshape(-1, 3)
+        if out.get("colors") is not None and len(out["colors"]) == len(pts):
+            colors = np.asarray(out["colors"], dtype=np.float32).reshape(-1, 3)
             out["colors"] = np.concatenate(
-                [colors] + [colors[sel_idx]] * (len(layers) - 1), axis=0
+                [colors] + [np.full((len(base), 3), colors.mean(axis=0),
+                                    dtype=np.float32)] * n_lv,
+                axis=0,
             )
         logger.info(
-            "support-plane completion: cloud median floated %.0f mm above "
-            "the local support; appended %d points across %d levels",
-            gap * 1000, len(base) * (len(layers) - 1), len(layers) - 1,
+            "amodal completion: slab-centroid bias %.1f mm, floating=%s -> "
+            "extruded %d slab points across %d levels (support_z=%.3f)",
+            centroid_bias * 1000, floating, len(base), n_lv, support_z,
         )
         return out
     except Exception as exc:
@@ -959,7 +1066,7 @@ def run(
         if hit is not None:
             logger.info("perceiving-objects cache HIT key=%s found=%s score=%.3f",
                         cache_key[:12], hit["found"], hit["score"])
-            return hit
+            return _static_container_anchor(object_name, hit)
         logger.info("perceiving-objects cache MISS key=%s", cache_key[:12])
 
     out = _run_uncached(
@@ -969,7 +1076,7 @@ def run(
     )
     if cache_key is not None and out["found"]:
         _cache_store(cache_key, out)
-    return out
+    return _static_container_anchor(object_name, out)
 
 
 def _run_uncached(
