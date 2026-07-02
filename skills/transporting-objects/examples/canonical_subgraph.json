@@ -1,0 +1,29 @@
+{
+  "skill": "transporting-objects",
+  "inputs": {"container_obb": "OrientedBoundingBox"},
+  "nodes": {
+    "transport_move": {
+      "type": "script",
+      "script": "scripts/transport_descend_linear.py",
+      "inputs": {
+        "container_obb": {"$ref": "in.container_obb"},
+        "place_offset": -0.06
+      }
+    },
+    "release": {
+      "type": "script",
+      "script": "scripts/place_release.py",
+      "inputs": {"place_position": {"$ref": "transport_move.place_position"}}
+    },
+    "placed": {"type": "noop"}
+  },
+  "edges": [
+    ["START", "transport_move"],
+    ["transport_move", "release"],
+    ["release", "placed"],
+    ["placed", "END"]
+  ],
+  "outputs": {"place_position": {"$ref": "transport_move.place_position"}},
+  "exit": {"router_field": null, "success_values": ["placed"]},
+  "on_error": "blocked"
+}

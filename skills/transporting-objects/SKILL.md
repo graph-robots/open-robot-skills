@@ -1,14 +1,16 @@
 ---
 name: transporting-objects
-description: Move the currently-held object above a destination container and
-  release. The gripper enters this subgraph holding the object; on exit the
-  object has been placed in the container. Combines drop-pose computation,
-  fast waypoint motion, and release-retract. Use after a successful grasp
-  when the destination container has a known OBB. When the destination is a
-  sub-region described in natural language (e.g. "the left compartment of
-  the caddy", "to the left of the plate", "the inside of the top drawer"),
-  an optional VLM-grounded perceive_zone state localizes the zone before
-  the drop pose is computed.
+description: Move the currently-held object to a destination and release. The
+  gripper enters this subgraph holding the object; on exit the object has been
+  placed. For a walled container (basket / bin / box / tote) the default is a
+  straight-Z descent to inside the walls (transport_descend_linear → release);
+  for placement ONTO a surface or into a described sub-region it computes an
+  explicit drop pose (compute_drop → move_above → release). Use after a
+  successful grasp when the destination has a known OBB. When the destination is
+  a sub-region described in natural language (e.g. "the left compartment of the
+  caddy", "to the left of the plate", "the inside of the top drawer"), an
+  optional VLM-grounded perceive_zone state localizes the zone before the drop
+  pose is computed.
 compatibility: requires gap>=0.1
 metadata: {category: motion, tags: [motion, transport, place, drop]}
 gap:
@@ -25,6 +27,7 @@ gap:
     - geometry.filter_and_compute_obb
     - geometry.build_world_config
     - curobo.plan_with_grasped_object
+    - curobo.plan_directed_linear
     - grounding-dino.detect
     - vlm.query
     - sam3.segment_box
@@ -39,6 +42,8 @@ gap:
     target_mask: Mask
     ee_pose_at_grasp: Se3Pose
   canonical_scripts:
+    - transport_descend_linear: scripts/transport_descend_linear.py
+    - place_release: scripts/place_release.py
     - compute_drop_pose: scripts/compute_drop_pose.py
     - drop_offset_pose: scripts/drop_offset_pose.py
     - approach_above: scripts/approach_above.py
@@ -55,6 +60,9 @@ gap:
       path: references/clearance_constants.md
     - title: Why no planner — direct waypoint motion suffices
       path: references/design_transport.md
+  examples:
+    - title: Canonical walled-container placement (transport_descend_linear → release)
+      path: examples/canonical_subgraph.json
   streaming: false
 ---
 
@@ -77,11 +85,48 @@ moves the held object above the destination container and releases it.
 
 ## Recommended subgraph state flow
 
-Either **3 states** (default — bare-container drop) or **4 states**
-(when a sub-region inside or adjacent to the container needs to be
-localized at drop time). Do **not** add more.
+Choose the flow by WHERE the object must land.
 
-3 states (default):
+### Default — a walled container (basket / bin / box / tote): 2 states
+
+**HARD RULE — pick this path whenever the destination is a container with walls**
+(a basket, bin, tote, box, or cup) — i.e. essentially every "put/place X **in**
+the <container>" task. Use the 2-state `transport_move → release` flow below and
+do **NOT** use the `compute_drop → move_above → release` drop-pose path (that
+path releases at/above the rim for a walled container and the object misses).
+The drop-pose path in the next section is ONLY for placing **onto** a surface or
+into a **named sub-region**.
+
+The object must end up INSIDE the walls, so descend straight down into it. This
+is the reference VAB packing recipe and needs only `container_obb`:
+
+```text
+transport_move → release
+```
+
+- **`transport_move`** — `type: script`,
+  `scripts/<sg>/transport_descend_linear.py`. Use the canonical script as-is
+  (materialized automatically; do **not** re-emit it). Inputs:
+  `container_obb = Ref("in.container_obb")`, `place_offset = -0.06` (the TCP
+  descends to just above the rim so the held object clears the walls and drops
+  in). It lifts, moves over the container, and does an axis-locked straight-Z
+  descend (`curobo.plan_directed_linear`, fingertip-frame). Returns
+  `place_position`.
+- **`release`** — `type: script`, `scripts/<sg>/place_release.py`.
+  Input `place_position = Ref("transport_move.place_position")`. Opens the
+  gripper with a settle so the object lands, then a linear straight-up retract.
+  On success → exit `placed`; on failure → `blocked`.
+
+Emit `examples/canonical_subgraph.json` verbatim for this path. Do **not** add a
+`compute_drop`/`move_above` here — the descend already places into the walls.
+
+### Placement ONTO a surface, or a described sub-region/zone, or a subpart grasp: the drop-pose path
+
+Here the target is a surface top or a localized zone (not "inside walls"), so
+compute an explicit drop pose. Either **3 states** or **4 states** (when a
+sub-region must be localized at drop time). Do **not** add more.
+
+3 states:
 
 ```text
 compute_drop → move_above → release
@@ -92,6 +137,11 @@ compute_drop → move_above → release
 ```text
 perceive_zone → compute_drop → move_above → release
 ```
+
+For this path prefer the `descend_release_linear` release variant (TCP-aware
+straight Cartesian line) over `descend_release` — the latter targets the
+panda_hand link and drops the ~0.10 m TCP offset, a common source of vertical
+placement misses.
 
 **Hard rule — no re-perception of the container.** Do NOT add states
 named `re_perceive_container`, `reobserve_container`, `re_observe_*`,

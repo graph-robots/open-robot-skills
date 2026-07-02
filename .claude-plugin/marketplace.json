@@ -20,7 +20,6 @@
         "./skills/grasping-with-planner",
         "./skills/perceiving-object-parts",
         "./skills/perceiving-objects",
-        "./skills/perceiving-objects-multiview",
         "./skills/perceiving-objects-oneshot",
         "./skills/running-policies",
         "./skills/tracking-objects",

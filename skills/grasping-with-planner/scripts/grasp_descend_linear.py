@@ -26,14 +26,20 @@ logger = logging.getLogger(__name__)
 
 _DOWN = {"w": 0.0, "x": 1.0, "y": 0.0, "z": 0.0}
 
-# Grasp depth tuning. _GRASP_DEEPEN is how far BELOW the top-down candidate Z the
-# gripper descends — smaller = shallower grip, closer to the perceived top. 0.0
-# grips at the candidate: descending deeper rams the panda_hand into tall cartons
-# that perception under-measures and topples them → jaws shut on air.
-# _BASE_CLEARANCE keeps the grip above the object base so the fingers never strike
-# the table (a very flat box thus still gets a real mid-height grip).
-_GRASP_DEEPEN = 0.0
-_BASE_CLEARANCE = 0.012
+# Grasp depth tuning — ADAPTIVE to object height. A top-down grip near the
+# perceived TOP tips tall cartons/bottles during the lift + lateral transport
+# (the grip point sits well above the centre of mass); a grip near the object's
+# vertical CENTRE is stable. So descend a height-proportional amount below the
+# OBB top: flat boxes stay shallow (near-top), tall objects (milk/juice cartons,
+# bottles) grip toward mid-height. Floored _BASE_CLEARANCE above the base so the
+# fingers never ram the table, and the descent is capped so a very tall object
+# isn't over-plunged. (grocery_packing used a FIXED shallow grip to compensate
+# for a scene where perception UNDER-measured tall cartons; libero perception is
+# accurate — validated 99.5% ID — so keying the depth off the true OBB height is
+# safe and prevents the tall-object tip-over.)
+_DEEPEN_FRAC = 0.5        # descend this fraction of the object's height below its top (0.5 → grip at centre)
+_MAX_DEEPEN = 0.07        # cap the descent below the top (m), so a very tall object isn't over-plunged
+_BASE_CLEARANCE = 0.012   # keep the grip at least this far above the object base (fingers clear the table)
 
 
 class Output(TypedDict):
@@ -79,16 +85,20 @@ def _cartesian_grasp(ctx: NodeContext, grasp_pose: Se3Pose,
                      target_obb: OrientedBoundingBox, hover_z: float) -> None:
     """Fast path: rise → XY over object (rotating to the grasp yaw) → descend.
 
-    Grip just under the candidate Z — a SHALLOW grip (``_GRASP_DEEPEN`` adds no
-    extra descent). A deeper grasp rams the panda_hand into tall cartons that
-    perception under-measures and topples them, so the jaws close on air. The
-    floor is _BASE_CLEARANCE above the object base so the fingers never ram the
-    table; for a very flat box that floor is ~mid-height, preserving a real grip."""
+    Grip depth is HEIGHT-ADAPTIVE (see the module constants): descend
+    ``_DEEPEN_FRAC`` of the object's height below its OBB top (capped at
+    ``_MAX_DEEPEN``), floored ``_BASE_CLEARANCE`` above the base. A flat box thus
+    gets a shallow near-top grip that still clears the table, while a tall carton
+    or bottle is gripped toward its centre of mass so it doesn't tip during the
+    lift + lateral transport."""
     g = grasp_pose["position"]
     rot = grasp_pose.get("rotation") or _DOWN      # grasp orientation (top-down candidate yaw)
     gx, gy = float(g["x"]), float(g["y"])
-    base_z = float(target_obb["center"]["z"]) - float(target_obb["extent"]["z"])
-    grasp_z = max(float(g["z"]) - _GRASP_DEEPEN, base_z + _BASE_CLEARANCE)  # shallow grip near top, still clear of table
+    c_z = float(target_obb["center"]["z"])
+    e_z = float(target_obb["extent"]["z"])
+    top, base_z, height = c_z + e_z, c_z - e_z, 2.0 * e_z
+    deepen = min(_MAX_DEEPEN, _DEEPEN_FRAC * height)  # deeper for tall objects, shallow for flat
+    grasp_z = max(top - deepen, base_z + _BASE_CLEARANCE)  # toward CoM for tall; near-top+floored for flat
     cur = ctx.tool("robot.get_ee_pose")["pose"]["position"]
     _cartesian(ctx, cur["x"], cur["y"], hover_z, _DOWN)   # Seg 0: rise to hover (keep down)
     _cartesian(ctx, gx, gy, hover_z, rot)                 # Seg 1: XY over object + rotate to grasp yaw

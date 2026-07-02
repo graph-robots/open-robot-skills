@@ -35,8 +35,8 @@ dependencies = [
 # are ever needed.
 perceiving-objects = []
 perceiving-objects-oneshot = []
-perceiving-objects-multiview = []
 perceiving-object-parts = []
+perceiving-next-item = []
 grasping-with-planner = []
 grasping-direct-ik = []
 grasping-short-axis = []

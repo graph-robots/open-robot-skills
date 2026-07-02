@@ -1,0 +1,81 @@
+{
+  "skill": "perceiving-next-item",
+  "inputs": {},
+  "nodes": {
+    "observe": {
+      "type": "tool",
+      "tool": "robot.get_observation"
+    },
+    "exterior_view": {
+      "type": "script",
+      "script": "scripts/exterior_view.py",
+      "inputs": {
+        "cameras": {"$ref": "observe.cameras"}
+      }
+    },
+    "perceive_container": {
+      "type": "script",
+      "script": "scripts/perceive_dino_vlm.py",
+      "inputs": {
+        "cameras": {"$ref": "exterior_view.cameras"},
+        "object_name": "basket"
+      }
+    },
+    "filter_obb_container": {
+      "type": "tool",
+      "tool": "geometry.filter_and_compute_obb",
+      "inputs": {"points": {"$ref": "perceive_container.cloud"}}
+    },
+    "perceive_item": {
+      "type": "script",
+      "script": "scripts/perceive_dino_vlm.py",
+      "inputs": {
+        "cameras": {"$ref": "observe.cameras"},
+        "object_name": "grocery item",
+        "object_description": "a packaged grocery product such as a can, box, carton, jar, or bottle. Never the wicker basket or storage container that the items are being packed into."
+      }
+    },
+    "decide": {
+      "type": "router",
+      "script": "scripts/decide_next_item.py",
+      "inputs": {
+        "found": {"$ref": "perceive_item.found"},
+        "cloud": {"$ref": "perceive_item.cloud"},
+        "container_obb": {"$ref": "filter_obb_container.obb"}
+      }
+    },
+    "filter_obb_item": {
+      "type": "tool",
+      "tool": "geometry.filter_and_compute_obb",
+      "inputs": {"points": {"$ref": "perceive_item.cloud"}}
+    },
+    "found": {"type": "noop"},
+    "none": {"type": "noop"}
+  },
+  "edges": [
+    ["START", "observe"],
+    ["observe", "exterior_view"],
+    ["exterior_view", "perceive_container"],
+    ["perceive_container", "filter_obb_container"],
+    ["filter_obb_container", "perceive_item"],
+    ["perceive_item", "decide"],
+    ["filter_obb_item", "found"],
+    ["found", "END"],
+    ["none", "END"]
+  ],
+  "conditional_edges": {
+    "decide": {
+      "router_field": null,
+      "mapping": {"found": "filter_obb_item", "none": "none"}
+    }
+  },
+  "outputs": {
+    "target_obb": {"$ref": "filter_obb_item.obb"},
+    "target_mask": {"$ref": "perceive_item.mask"},
+    "container_obb": {"$ref": "filter_obb_container.obb"},
+    "container_mask": {"$ref": "perceive_container.mask"},
+    "container_cloud": {"$ref": "perceive_container.cloud"}
+  },
+  "exit": {"router_field": null, "success_values": ["found", "none"]},
+  "on_error": "perception_failed"
+}

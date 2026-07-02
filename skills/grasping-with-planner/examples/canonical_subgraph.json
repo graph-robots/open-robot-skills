@@ -1,0 +1,51 @@
+{
+  "skill": "grasping-with-planner",
+  "inputs": {"target_obb": "OrientedBoundingBox"},
+  "nodes": {
+    "open": {
+      "type": "tool",
+      "tool": "robot.open_gripper",
+      "inputs": {"settle_steps": 40}
+    },
+    "compute_grasp": {
+      "type": "tool",
+      "tool": "geometry.top_down_grasp_candidates",
+      "inputs": {"obb": {"$ref": "in.target_obb"}, "z_offset": -0.03}
+    },
+    "goto_grasp": {
+      "type": "script",
+      "script": "scripts/grasp_descend_linear.py",
+      "inputs": {
+        "grasp_pose": {"$ref": "compute_grasp.candidates.poses.0"},
+        "candidate_poses": {"$ref": "compute_grasp.candidates.poses"},
+        "target_obb": {"$ref": "in.target_obb"},
+        "hover_z": 0.2
+      }
+    },
+    "observe": {
+      "type": "tool",
+      "tool": "robot.get_observation"
+    },
+    "close": {
+      "type": "tool",
+      "tool": "robot.close_gripper",
+      "inputs": {"settle_steps": 60}
+    },
+    "grasped": {"type": "noop"}
+  },
+  "edges": [
+    ["START", "open"],
+    ["open", "compute_grasp"],
+    ["compute_grasp", "goto_grasp"],
+    ["goto_grasp", "observe"],
+    ["observe", "close"],
+    ["close", "grasped"],
+    ["grasped", "END"]
+  ],
+  "outputs": {
+    "ee_pose_at_grasp": {"$ref": "observe.arms.0.ee_pose"},
+    "grasp_pose": {"$ref": "compute_grasp.candidates.poses.0"}
+  },
+  "exit": {"router_field": null, "success_values": ["grasped"]},
+  "on_error": "failed"
+}

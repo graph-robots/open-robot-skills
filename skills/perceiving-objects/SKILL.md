@@ -43,8 +43,6 @@ gap:
   prompts:
     vlm_pairwise: prompts/vlm_pairwise.md
   references:
-    - title: When to pick perceiving-objects vs perceiving-objects-multiview
-      path: references/single_vs_multi.md
     - title: Perception pipeline invariants (emit obb + mask + cloud)
       path: references/perception_pipeline_invariants.md
     - title: Geometry tool calling conventions (output field binding)
@@ -85,12 +83,13 @@ measured slip-during-transport failure mode on tall bottles/cartons.
 
 - Uncluttered scenes with visually distinct targets.
 - Platforms where only DINO + VLM + SAM3 + geometry are deployed.
-- When `perceiving-objects-multiview` is not in the available skill catalog.
+- The default single-target 3D perception skill.
 
 ## When NOT to use
 
-- Cluttered scenes with similar nearby distractors. Prefer
-  `perceiving-objects-multiview`.
+- Cluttered scenes with many similar nearby distractors: strengthen the
+  pairwise tournament by passing `object_description` shape/appearance hints
+  (see the note above) rather than relying on the bare label alone.
 - Clean-all-items / multi-item loops that need a clean "no match" loop
   terminator. Prefer `perceiving-objects-oneshot`.
 
@@ -222,7 +221,5 @@ without you having to anticipate which skill they'll use.
 
 ## See also
 
-- `references/single_vs_multi.md` — the choice between single- and multi-
-  method perception.
 - `prompts/vlm_pairwise.md` — the pairwise-tournament VLM prompt template.
 - `scripts/perceive_dino_vlm.py` — the canonical perception script.
