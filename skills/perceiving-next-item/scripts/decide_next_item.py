@@ -6,12 +6,13 @@ alone does NOT reliably end the loop (if a delivery fails the item stays on
 the table and perception keeps seeing it, spinning until the perception-call
 safety guard kills the episode), so we combine three signals, cheapest-first:
 
-  1. **Authoritative env completion.** When the connector is a simulator, read
-     its own ``sim.check_success`` verdict: ``task_completed`` True means every
-     item is delivered -> ``none`` (a clean success). This never false-rejects,
-     so the loop never spins on the basket after the table is clear nor stops
-     early while items remain. Wrapped in try/except so a real-robot connector
-     (no ``sim.*`` tools) falls through to perception.
+  1. **Env telemetry (log-only).** When the connector is a simulator, its
+     ``sim.check_success`` completion_rate is logged for diagnostics — but it
+     does NOT terminate the loop: the env's task can be narrower than the
+     user's instruction (a LIBERO object suite completes on one target item
+     while a pack-all instruction still has items on the table), and it is
+     privileged information besides. Wrapped in try/except so a real-robot
+     connector (no ``sim.*`` tools) skips it.
   2. **No-progress guard.** If the delivered fraction (``completion_rate``) has
      not increased for ``_STUCK_LIMIT`` consecutive passes, the loop can no
      longer make progress (e.g. one ungraspable item left) -> ``none`` rather
@@ -76,8 +77,12 @@ def run(
             f"{cr:.3f}" if isinstance(cr, (int, float)) else cr,
             sc.get("task_completed"), bool(found),
         )
-        if sc.get("task_completed"):
-            return {"route": "none"}
+        # NOTE: task_completed is deliberately NOT an exit signal. It
+        # verifies the ENV's task, which can be narrower than the user's
+        # instruction (LIBERO object suites complete on one target item
+        # while a pack-all instruction still has items left) — and it is
+        # privileged info. Perception (#3) ends the loop; the no-progress
+        # guard (#2) covers the perception-false-positive spin case.
         if _no_progress(cr if isinstance(cr, (int, float)) else None):
             logger.info("[decide_next_item] no completion progress for %d passes -> none",
                         _STUCK_LIMIT)

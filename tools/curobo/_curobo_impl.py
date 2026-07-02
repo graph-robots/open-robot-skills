@@ -791,7 +791,10 @@ def extract_planning_debug_trajectories(
     Stages: graph_plan, trajopt_result, finetune_trajopt_result, final_trajectory.
     """
     if tensor_args is None:
-        tensor_args = TensorDeviceType()
+        # v0.8 ships no TensorDeviceType (the FK helpers below are v0.7-only):
+        # keep the joint trajectories and skip EE FK instead of aborting the
+        # whole extraction with a NameError.
+        tensor_args = TensorDeviceType() if _V1_AVAILABLE else None
 
     stages: dict[str, Any] = {}
 
@@ -813,6 +816,8 @@ def extract_planning_debug_trajectories(
     def _to_ee(joint_traj_np: np.ndarray | None) -> np.ndarray | None:
         if joint_traj_np is None or joint_traj_np.size == 0:
             return None
+        if tensor_args is None:
+            return None  # v0.8: no v0.7 FK stack — joint trajs only
         try:
             arr = joint_traj_np
             # Ensure 2D (T, dof)
@@ -909,6 +914,11 @@ def joint_trajectory_to_ee_positions(
     joint_traj: (T, 7) arm joint positions in radians.
     Returns (T, 3) Cartesian positions in meters (robot base frame)."""
     if tensor_args is None:
+        if not _V1_AVAILABLE:
+            raise RuntimeError(
+                "joint_trajectory_to_ee_positions needs the curobo v0.7 FK "
+                "stack (CudaRobotModel); not available on curobo v0.8"
+            )
         tensor_args = TensorDeviceType()
     robot_path = join_path(get_robot_configs_path(), robot_file)
     robot_cfg = RobotConfig.from_dict(load_yaml(robot_path), tensor_args)
@@ -932,6 +942,11 @@ def robot_joint_position_to_ee_pose(
     joint_position: (7,) or (8,) arm joint positions in radians.
     Returns (position (3,), quaternion_wxyz (4,)) in robot base frame."""
     if tensor_args is None:
+        if not _V1_AVAILABLE:
+            raise RuntimeError(
+                "robot_joint_position_to_ee_pose needs the curobo v0.7 FK "
+                "stack (CudaRobotModel); not available on curobo v0.8"
+            )
         tensor_args = TensorDeviceType()
     robot_path = join_path(get_robot_configs_path(), robot_file)
     robot_cfg = RobotConfig.from_dict(load_yaml(robot_path), tensor_args)

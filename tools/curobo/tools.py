@@ -80,8 +80,21 @@ def _cuda_cleanup(impl: Any, cache_attr: str, err: Exception) -> None:
 
 
 def _joints(js: JointState) -> np.ndarray:
-    """gap JointState -> (dof,) float64 positions."""
-    return np.asarray(js["positions"], dtype=np.float64).flatten()
+    """Joint positions -> (dof,) float64, tolerant of the shapes generated
+    graphs actually wire in: a gap ``JointState`` dict, a full arm
+    observation (``{"joint_state": {...}}``), or a bare positions
+    list/array. Guessed-wrong wiring used to surface as an opaque
+    ``list indices must be integers`` crash mid-place."""
+    if isinstance(js, dict):
+        if "positions" in js:
+            return np.asarray(js["positions"], dtype=np.float64).flatten()
+        if "joint_state" in js:
+            return _joints(js["joint_state"])
+        raise TypeError(
+            "joint state dict has neither 'positions' nor 'joint_state' "
+            f"(keys: {sorted(js)})"
+        )
+    return np.asarray(js, dtype=np.float64).flatten()
 
 
 def _pose_tuple(pose: Se3Pose) -> tuple[np.ndarray, np.ndarray]:

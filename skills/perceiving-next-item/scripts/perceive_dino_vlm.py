@@ -51,7 +51,7 @@ _MIN_INTERSECTION = 1
 # input camera frames + args. A hit short-circuits the entire
 # DINO+tournament+SAM path. Bump _CACHE_VERSION when the algorithm changes
 # meaningfully.
-_CACHE_VERSION = "3"
+_CACHE_VERSION = "5"  # support-plane completion
 _CACHE_ENABLED = os.environ.get("GAP_PERCEPTION_CACHE", "1") == "1"
 # Default to checkout-local .llm_cache/perceiving-objects/ so cache is
 # per-checkout and easy to wipe. Override with GAP_PERCEPTION_CACHE_DIR.
@@ -485,8 +485,85 @@ def _perceive_single_camera(
         )
         return None
 
+    cloud = _extend_cloud_to_support(ctx, cloud, seg_mask, cam)
+
     return _CamResult(cloud=cloud, mask=seg_mask, score=seg_score,
                       box=sel_box)
+
+
+# ---------------------------------------------------------------------------
+# Amodal bottom completion (low-profile objects)
+# ---------------------------------------------------------------------------
+# A top-down view of a low object (the 2 cm cream-cheese / butter boxes)
+# yields a top-face-only cloud whose OBB has ~zero vertical extent; the
+# grasp then closes ABOVE the object and grabs air. When the object cloud
+# floats above the LOCAL support plane -- estimated from a dilated ring of
+# non-object pixels around the mask -- mirror the footprint down to the
+# support height so the OBB regains the object's true vertical extent.
+# Tall objects whose sides are observed are a no-op (their cloud already
+# reaches the support plane).
+_SUPPORT_GAP_MIN_M = 0.012
+_SUPPORT_RING_PX = 12
+_SUPPORT_MAX_SYNTH = 2000
+
+
+def _extend_cloud_to_support(ctx, cloud, seg_mask, cam):
+    try:
+        pts = np.asarray(cloud["points"], dtype=np.float64).reshape(-1, 3)
+        if len(pts) < 20:
+            return cloud
+        from scipy import ndimage
+        m = np.asarray(seg_mask) > 0
+        ring = ndimage.binary_dilation(m, iterations=_SUPPORT_RING_PX) & ~m
+        ring_resp = ctx.tool(
+            "geometry.mask_to_world_points",
+            mask=(ring.astype(np.uint8) * 255), depth=cam["depth"],
+            intrinsics=cam["intrinsics"], camera_pose=cam["pose"],
+        )["points"]
+        ring_pts = np.asarray(
+            ring_resp["points"], dtype=np.float64
+        ).reshape(-1, 3)
+        if len(ring_pts) < 50:
+            return cloud
+        support_z = float(np.percentile(ring_pts[:, 2], 20.0))
+        z_med = float(np.median(pts[:, 2]))
+        # Median, not min: segmentation bleed puts a few table pixels in
+        # the object mask, so min-z sits at the support height even when
+        # the whole visible surface is a floating top face.
+        gap = z_med - support_z
+        if gap < _SUPPORT_GAP_MIN_M:
+            return cloud
+        sel_idx = np.arange(len(pts))
+        if len(sel_idx) > _SUPPORT_MAX_SYNTH:
+            sel_idx = np.linspace(
+                0, len(pts) - 1, _SUPPORT_MAX_SYNTH
+            ).astype(int)
+        # A vertical curtain (not one detached bottom slab) so the
+        # downstream DBSCAN noise filter sees a single connected cluster
+        # and keeps the completion.
+        base = pts[sel_idx]
+        layers = [pts]
+        for lv in np.linspace(support_z + 0.002, z_med, 4)[:-1]:
+            layer = base.copy()
+            layer[:, 2] = lv
+            layers.append(layer)
+        out = dict(cloud)
+        out["points"] = np.concatenate(layers, axis=0).astype(np.float32)
+        colors = out.get("colors")
+        if colors is not None and len(colors) == len(pts):
+            colors = np.asarray(colors, dtype=np.float32).reshape(-1, 3)
+            out["colors"] = np.concatenate(
+                [colors] + [colors[sel_idx]] * (len(layers) - 1), axis=0
+            )
+        logger.info(
+            "support-plane completion: cloud median floated %.0f mm above "
+            "the local support; appended %d points across %d levels",
+            gap * 1000, len(base) * (len(layers) - 1), len(layers) - 1,
+        )
+        return out
+    except Exception as exc:
+        logger.warning("support-plane completion skipped: %s", exc)
+        return cloud
 
 
 def _merge_multiview(results: list[_CamResult]) -> PointCloud:

@@ -98,7 +98,13 @@ def _cartesian_grasp(ctx: NodeContext, grasp_pose: Se3Pose,
     e_z = float(target_obb["extent"]["z"])
     top, base_z, height = c_z + e_z, c_z - e_z, 2.0 * e_z
     deepen = min(_MAX_DEEPEN, _DEEPEN_FRAC * height)  # deeper for tall objects, shallow for flat
-    grasp_z = max(top - deepen, base_z + _BASE_CLEARANCE)  # toward CoM for tall; near-top+floored for flat
+    # For objects shorter than ~3.5 cm the fixed 12 mm base clearance
+    # exceeds most of the object's height and the pinch engages only the
+    # top few mm (butter / cream-cheese boxes slip out). Scale the floor
+    # with height for those; objects taller than 0.35*h >= 12 mm keep the
+    # exact tuned behavior.
+    base_clearance = min(_BASE_CLEARANCE, max(0.006, 0.35 * height))
+    grasp_z = max(top - deepen, base_z + base_clearance)  # toward CoM for tall; near-top+floored for flat
     cur = ctx.tool("robot.get_ee_pose")["pose"]["position"]
     _cartesian(ctx, cur["x"], cur["y"], hover_z, _DOWN)   # Seg 0: rise to hover (keep down)
     _cartesian(ctx, gx, gy, hover_z, rot)                 # Seg 1: XY over object + rotate to grasp yaw
