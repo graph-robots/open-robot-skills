@@ -40,7 +40,10 @@ _DOWN = {"w": 0.0, "x": 1.0, "y": 0.0, "z": 0.0}
 # accurate — validated 99.5% ID — so keying the depth off the true OBB height is
 # safe and prevents the tall-object tip-over.)
 _DEEPEN_FRAC = 0.5        # descend this fraction of the object's height below its top (0.5 → grip at centre)
-_MAX_DEEPEN = 0.07        # cap the descent below the top (m), so a very tall object isn't over-plunged
+_MAX_DEEPEN = 0.035       # cap = usable finger-pad depth. The Panda finger is ~5 cm
+                          # from palm to tip: descending more than ~3.5 cm below the
+                          # object top puts the PALM below the top and rams tall
+                          # cartons/bottles over (observed on milk + ranch dressing).
 _BASE_CLEARANCE = 0.012   # keep the grip at least this far above the object base (fingers clear the table)
 
 
