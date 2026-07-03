@@ -10,7 +10,7 @@ A curated, contributable library of manipulation **skills** and model-backed
 The LLM pipeline composes these bundles into executable robot graphs;
 every bundle is one directory, one `SKILL.md`, one PR.
 
-[![Skills](https://img.shields.io/badge/skills-10-blue.svg)](#skills--what-the-robot-can-do)
+[![Skills](https://img.shields.io/badge/skills-9-blue.svg)](#skills--what-the-robot-can-do)
 [![Tools](https://img.shields.io/badge/tool%20bundles-7-orange.svg)](#tools--what-the-robot-can-compute)
 [![Format: Agent Skills](https://img.shields.io/badge/format-Agent%20Skills-purple.svg)](https://agentskills.io/specification)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#contributing-a-bundle)
@@ -49,14 +49,13 @@ graphs through the policy plane, not the skill registry.
 |---|---|---|---|
 | [grasping-direct-ik](skills/grasping-direct-ik/) | Direct IK align-then-descend grasping. | — | `open-robot-skills[grasping-direct-ik]` |
 | [grasping-short-axis](skills/grasping-short-axis/) | Deterministic short-axis-aligned grasp with CuRobo. | — | `open-robot-skills[grasping-short-axis]` |
-| [grasping-with-planner](skills/grasping-with-planner/) | Collision-aware grasping using cuRobo trajectory planning over a per-observation collision world. | — | `open-robot-skills[grasping-with-planner]` |
-| [molmoact-libero](policies/molmoact-libero/) | Run the MolmoAct LIBERO checkpoint as a closed-loop VLA policy for the LIBERO Franka pick-and-place segment (the MolmoAct alternative to `pi05-libero`). Owns its serving preset — no `policy_id`. | `molmoact-libero.run` | `uv run gap skills install molmoact-libero` |
+| [grasping-with-planner](skills/grasping-with-planner/) | Top-down grasping via a fast axis-locked linear descend with a collision-aware cuRobo fallback. | — | `open-robot-skills[grasping-with-planner]` |
+| [perceiving-next-item](skills/perceiving-next-item/) | Loop-head perception for pack-all / clean-all-items tasks. | — | `open-robot-skills[perceiving-next-item]` |
 | [perceiving-object-parts](skills/perceiving-object-parts/) | Hierarchical perception for subpart targeting. | — | `open-robot-skills[perceiving-object-parts]` |
 | [perceiving-objects](skills/perceiving-objects/) | Fast single-path 3D object perception. | — | `open-robot-skills[perceiving-objects]` |
 | [perceiving-objects-oneshot](skills/perceiving-objects-oneshot/) | Lightweight one-shot 3D object perception. | — | `open-robot-skills[perceiving-objects-oneshot]` |
-| [pi05-libero](policies/pi05-libero/) | Run the openpi π0.5 LIBERO checkpoint as a closed-loop VLA policy for the LIBERO Franka pick-and-place segment. Owns its serving preset — no `policy_id`. | `pi05-libero.run` | `uv run gap skills install pi05-libero` |
 | [tracking-objects](skills/tracking-objects/) | Long-running skill that drives the SAM3 tracker from the graph-scoped observation stream. | `tracking-objects.track` | `open-robot-skills[tracking-objects]` |
-| [transporting-objects](skills/transporting-objects/) | Move the currently-held object above a destination container and release. | — | `open-robot-skills[transporting-objects]` |
+| [transporting-objects](skills/transporting-objects/) | Move the currently-held object to a destination and release. | — | `open-robot-skills[transporting-objects]` |
 
 ## Tools — what the robot can compute
 
@@ -68,13 +67,13 @@ bundle's own `pyproject.toml`), environment variables, weights, and quirks.
 
 | Bundle | Description | Tools | Extra |
 |---|---|---|---|
-| [curobo](tools/curobo/) | NVIDIA cuRobo motion planning — collision-free trajectories to grasp goalsets, transport with an attached object, constrained linear moves, single-pose planning, geometric IK, batch grasp feasibility, and joint-trajectory collision validation. | `curobo.batch_grasp_feasibility`, `curobo.plan_directed_linear`, `curobo.plan_grasp_motion`, `curobo.plan_linear`, `curobo.plan_to_grasp_poses`, `curobo.plan_to_pose`, `curobo.plan_with_grasped_object`, `curobo.solve_ik`, `curobo.validate_joint_trajectory_grasped`, `curobo.validate_joint_trajectory_robot` | `open-robot-skills[curobo]` |
-| [gemini-er](tools/gemini-er/) | Open-vocabulary 2D object detection via the Gemini Robotics-ER API — one call returns pixel-space bounding boxes with labels and scores for a text query. | `gemini-er.detect` | `open-robot-skills[gemini-er]` |
-| [geometry](tools/geometry/) | Pure-math 3D geometry toolbox — back-project masks and depth to point clouds, DBSCAN-filter noise, fit oriented bounding boxes, derive top-down/front grasp poses, and reconstruct collision worlds from RGB-D frames. | `geometry.build_world_config`, `geometry.compute_drop_position`, `geometry.compute_obb`, `geometry.compute_xy_distance`, `geometry.depth_to_point_cloud`, `geometry.exclude_robot_points`, `geometry.filter_and_compute_obb`, `geometry.filter_noise`, `geometry.front_grasp_from_obb`, `geometry.iou`, `geometry.mask_to_world_points`, `geometry.pixel_to_world_point`, `geometry.pose_distance`, `geometry.rotate_quat_z90`, `geometry.select_top_down_grasp`, `geometry.top_down_grasp_candidates`, `geometry.top_down_grasp_from_obb`, `geometry.transform_points` | `open-robot-skills[geometry]` |
-| [grounding-dino](tools/grounding-dino/) | Grounding DINO zero-shot object detection — natural-language queries to labeled 2D bounding boxes with confidence scores. | `grounding-dino.detect` | `open-robot-skills[grounding-dino]` |
-| [molmo](tools/molmo/) | Visual pointing and Q&A via the Molmo VLM served from a self-hosted vLLM endpoint (OpenAI-compatible API). | `molmo.point_prompt`, `molmo.query`, `molmo.query_yes_no` | `open-robot-skills[molmo]` |
-| [sam3](tools/sam3/) | Segment Anything 3 — text-, point-, and box-prompted instance segmentation, plus a stateful streaming video tracker that carries object identity through SAM3's memory bank. | `sam3.segment_box`, `sam3.segment_point`, `sam3.segment_text`, `sam3.tracker_close`, `sam3.tracker_init`, `sam3.tracker_update` | `open-robot-skills[sam3]` |
-| [vlm](tools/vlm/) | Free-form and yes/no visual question answering against a hosted vision-language model (OpenRouter API by default; Vertex AI Gemini selectable by config). | `vlm.query`, `vlm.query_yes_no` | `open-robot-skills[vlm]` |
+| [curobo](tools/curobo/) | NVIDIA cuRobo motion planning — collision-free trajectories to grasp goalsets, transport with an attached object, constrained linear moves, single-pose planning, geometric IK, batch grasp feasibility, and joint-trajectory collision validation. | `curobo.batch_grasp_feasibility`, `curobo.plan_directed_linear`, `curobo.plan_grasp_motion`, `curobo.plan_linear`, `curobo.plan_to_grasp_poses`, `curobo.plan_to_pose`, `curobo.plan_with_grasped_object`, `curobo.solve_ik`, `curobo.validate_joint_trajectory_grasped`, `curobo.validate_joint_trajectory_robot` | — |
+| [gemini-er](tools/gemini-er/) | Open-vocabulary 2D object detection via the Gemini Robotics-ER API — one call returns pixel-space bounding boxes with labels and scores for a text query. | `gemini-er.detect` | — |
+| [geometry](tools/geometry/) | Pure-math 3D geometry toolbox — back-project masks and depth to point clouds, DBSCAN-filter noise, fit oriented bounding boxes, derive top-down/front grasp poses, and reconstruct collision worlds from RGB-D frames. | `geometry.build_world_config`, `geometry.compute_drop_position`, `geometry.compute_obb`, `geometry.compute_xy_distance`, `geometry.depth_to_point_cloud`, `geometry.exclude_robot_points`, `geometry.filter_and_compute_obb`, `geometry.filter_noise`, `geometry.front_grasp_from_obb`, `geometry.iou`, `geometry.mask_to_world_points`, `geometry.pixel_to_world_point`, `geometry.pose_distance`, `geometry.rotate_quat_z90`, `geometry.select_top_down_grasp`, `geometry.top_down_grasp_candidates`, `geometry.top_down_grasp_from_obb`, `geometry.transform_points` | — |
+| [grounding-dino](tools/grounding-dino/) | Grounding DINO zero-shot object detection — natural-language queries to labeled 2D bounding boxes with confidence scores. | `grounding-dino.detect` | — |
+| [molmo](tools/molmo/) | Visual pointing and Q&A via the Molmo VLM served from a self-hosted vLLM endpoint (OpenAI-compatible API). | `molmo.point_prompt`, `molmo.query`, `molmo.query_yes_no` | — |
+| [sam3](tools/sam3/) | Segment Anything 3 — text-, point-, and box-prompted instance segmentation, plus a stateful streaming video tracker that carries object identity through SAM3's memory bank. | `sam3.segment_box`, `sam3.segment_point`, `sam3.segment_text`, `sam3.tracker_close`, `sam3.tracker_init`, `sam3.tracker_update` | — |
+| [vlm](tools/vlm/) | Free-form and yes/no visual question answering against a hosted vision-language model (OpenRouter API by default; Vertex AI Gemini selectable by config). | `vlm.query`, `vlm.query_yes_no` | — |
 
 Both tables are generated — regenerate after adding a bundle:
 
