@@ -77,6 +77,40 @@ gap:
       Perceive the item from the raw `observe.cameras`, but perceive the
       container through `exterior_view` (drop the wrist cam) — the angled
       eye-in-hand view bloats the container OBB by fusing neighbouring points.
+    - >
+      WIRE A SINGLE CHAIN, never parallel branches: observe → exterior_view →
+      perceive_container → filter_obb_container → perceive_item → decide.
+      Do NOT add a second edge from `observe` straight to `perceive_item` to
+      "parallelize" the two perceptions: the runtime scheduler has no join
+      barrier, so `decide` (which consumes `filter_obb_container.obb`) can be
+      scheduled by `perceive_item`'s completion before `filter_obb_container`
+      has run — the $ref fails at runtime and the subgraph aborts on every
+      trial (validator rule S12 rejects this shape).
+    - >
+      RESTRICTED ITEM SETS: when the task's target set is restricted — a
+      SUBSET ("pack the milk and the tomato sauce…") OR an EXCLUSION ("pack
+      everything except the milk…") — i.e. whenever some visible object must
+      NOT be packed, the `perceive_item` node MUST also pass
+      `reject_unverified: true` (a boolean node input, next to
+      object_name/object_description), and its `object_name`/
+      `object_description` literals MUST spell out the allowed set and every
+      exclusion (excluded items AND the container). Why: the default perceive
+      favors recall — an unverified best-guess pick is kept so a pack-ALL
+      loop never stops early — but under a restricted query that same
+      fallback returns EXCLUDED items: a subset loop packs things the task
+      forbade, and an exclusion loop ends by grasping at the excluded item
+      and aborting instead of exiting `none`. `reject_unverified: true`
+      flips the gate to precision: no verified allowed-item ⇒ `found=false`
+      ⇒ the loop exits `none` exactly when only excluded objects remain.
+      Set it ONLY for restricted sets — for true pack-all tasks ("all
+      objects", "every item") leave it unset; recall mode is what keeps
+      those loops from terminating early. The allowed set must be a
+      CONCRETE CATEGORY, never a tautology: write "a packaged grocery
+      product such as a can, box, carton, jar, or bottle — never the milk
+      carton, and never the wicker basket", NOT "any object except the
+      milk" — "any object" is satisfied by every spurious detection
+      (table patch, shadow, robot part), so the precision gate can never
+      reject the leftovers and the loop cannot exit.
   canonical_scripts:
     - perceive_dino_vlm: scripts/perceive_dino_vlm.py
     - exterior_view: scripts/exterior_view.py
@@ -169,7 +203,9 @@ State details:
 5. **`perceive_item`** — `type: script`, `scripts/<sg>/perceive_dino_vlm.py`,
    `inputs: {cameras: Ref("observe.cameras"), object_name: "grocery item",
    object_description: "…never the wicker basket…"}` (the exclusion is a HARD
-   rule above).
+   rule above). For SUBSET tasks (specific items only), add
+   `reject_unverified: True` and name exactly the allowed items in the
+   literals — see the subset-scoping HARD rule.
 6. **`decide`** — `type: router`, `scripts/<sg>/decide_next_item.py`,
    `inputs: {found: Ref("perceive_item.found"), cloud: Ref("perceive_item.cloud"),
    container_obb: Ref("filter_obb_container.obb")}`. Maps

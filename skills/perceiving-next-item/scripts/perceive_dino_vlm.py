@@ -51,7 +51,7 @@ _MIN_INTERSECTION = 1
 # input camera frames + args. A hit short-circuits the entire
 # DINO+tournament+SAM path. Bump _CACHE_VERSION when the algorithm changes
 # meaningfully.
-_CACHE_VERSION = "7"
+_CACHE_VERSION = "9"  # v9: strict (binding-description) verify phrasing in reject_unverified mode
 _CACHE_ENABLED = os.environ.get("GAP_PERCEPTION_CACHE", "1") == "1"
 # Default to checkout-local .llm_cache/perceiving-objects/ so cache is
 # per-checkout and easy to wipe. Override with GAP_PERCEPTION_CACHE_DIR.
@@ -335,6 +335,7 @@ def _verify_pick(
     object_name: str,
     object_description: str,
     default: bool,
+    strict: bool = False,
 ) -> bool:
     """Focused yes/no on the chosen crop — 'is this close-up actually a
     <object_name>?'. The gate signal for the `safe` wrist-fallback
@@ -342,6 +343,12 @@ def _verify_pick(
       - exterior pick -> default True  (verify error must NOT trigger a
         spurious wrist fallback; keep the exterior pick = zero-regression)
       - wrist pick     -> default False (never accept an unverified wrist)
+
+    ``strict`` (used with reject_unverified — restricted item sets): the
+    description is BINDING, exclusions included. The default phrasing
+    ("It should look like: …") is advisory — a milk-carton crop passes
+    'Is this a "object"? … except the milk' because the VLM answers the
+    object-ness question and ignores the subordinate exception clause.
     """
     if box is None:
         return default
@@ -349,9 +356,16 @@ def _verify_pick(
     if crop is None:
         return default
     img = _upscale_letterbox(crop)
-    q = f'Is the main object in this close-up a "{object_name}"?'
-    if object_description:
-        q += f" It should look like: {object_description}."
+    if strict and object_description:
+        q = (
+            f'Does the main object in this close-up satisfy ALL of this '
+            f'description: "{object_description}"? If the object is one of '
+            f"the things the description excludes, answer NO."
+        )
+    else:
+        q = f'Is the main object in this close-up a "{object_name}"?'
+        if object_description:
+            q += f" It should look like: {object_description}."
     try:
         resp = ctx.tool("vlm.query_yes_no", prompt=q, image=img)
         return bool(resp["answer"])
@@ -856,7 +870,8 @@ def _run_uncached(
         if reject_unverified and results:
             bc, br = max(results, key=lambda cr: cr[1].score)
             if not _verify_pick(ctx, bc["rgb"], br.box,
-                                object_name, object_description, default=True):
+                                object_name, object_description, default=True,
+                                strict=True):
                 logger.info(
                     "single-view terminal-reject: pick failed '%s' verify "
                     "-> found=False (table clear)", object_name)
@@ -869,7 +884,8 @@ def _run_uncached(
     if ext:
         bc, br = max(ext, key=lambda cr: cr[1].score)
         if _verify_pick(ctx, bc["rgb"], br.box,
-                        object_name, object_description, default=True):
+                        object_name, object_description, default=True,
+                        strict=reject_unverified):
             logger.info(
                 "safe gate: exterior pick verified for '%s' -> exterior",
                 object_name)
@@ -883,13 +899,28 @@ def _run_uncached(
     if wr:
         wc, wrr = max(wr, key=lambda cr: cr[1].score)
         if _verify_pick(ctx, wc["rgb"], wrr.box,
-                        object_name, object_description, default=False):
+                        object_name, object_description, default=False,
+                        strict=reject_unverified):
             logger.info("safe gate: wrist pick verified -> wrist")
             return _finish([wrr])
 
-    # Neither side verified: conservatively keep the exterior result if
-    # any, else fall back to the legacy exterior segment_text net (never
-    # fuse an unverified wrist — that is the regressing behavior).
+    # Neither side verified. Two regimes:
+    #   * broad queries ("grocery item" — any remaining item is a valid
+    #     target): favor RECALL — keep the exterior result even unverified
+    #     (never fuse an unverified wrist — that is the regressing
+    #     behavior). A verify false-reject would otherwise end a pack-all
+    #     loop with items still on the table.
+    #   * narrow queries (reject_unverified=True — the loop targets specific
+    #     item names): favor PRECISION — report found=False. Keeping an
+    #     unverified pick here makes the loop grasp non-target items (a
+    #     "pack the milk and the tomato sauce" loop was observed packing
+    #     all six objects through this fallback).
+    if reject_unverified:
+        logger.info(
+            "safe gate: no verified pick and reject_unverified=True "
+            "-> found=False (no target item present)")
+        return {"found": False, "cloud": _empty_cloud(),
+                "mask": _empty_mask(), "score": 0.0}
     fallback = [r for _, r in ext] or [r for _, r in _collect(ext_cams, None)]
     logger.info("safe gate: no verified pick; using conservative exterior "
                 "fallback (%d result(s))", len(fallback))
