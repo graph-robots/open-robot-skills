@@ -244,6 +244,9 @@ At the top level, route this subgraph's `found → grasp`, `none → done`,
 ## See also
 
 - `scripts/perceive_dino_vlm.py` — the pairwise-tournament perception (shared with `perceiving-objects`).
-- `scripts/decide_next_item.py` — the perception-only loop router (no sim/env signal).
+- `scripts/decide_next_item.py` — the unprivileged loop router: per-pass VLM
+  all-packed check (primary stop) + same-target no-progress guard + perception
+  verdict; `sim.check_success` is telemetry only (`GAP_DECIDE_TRUST_ENV=1` opts
+  into trusting it on benchmarks).
 - `scripts/exterior_view.py` — wrist-cam drop for a clean container OBB.
 - `prompts/vlm_pairwise.md` — the pairwise-tournament VLM prompt template.
