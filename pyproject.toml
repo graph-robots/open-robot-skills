@@ -4,7 +4,7 @@ version = "0.1.0.dev0"
 description = "Skill and tool bundles for gap (graph as policy) — Anthropic Agent Skills format, discovered by path."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 authors = [{ name = "graph-as-policy authors" }]
 
 # The distribution itself is nearly empty: bundles are discovered from this

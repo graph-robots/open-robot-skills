@@ -14,7 +14,7 @@ every bundle is one directory, one `SKILL.md`, one PR.
 [![Tools](https://img.shields.io/badge/tool%20bundles-7-orange.svg)](#tools--what-the-robot-can-compute)
 [![Format: Agent Skills](https://img.shields.io/badge/format-Agent%20Skills-purple.svg)](https://agentskills.io/specification)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#contributing-a-bundle)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 
 </div>
 
@@ -191,6 +191,14 @@ claude plugin install gap@gap
 
 ## License
 
-MIT for this repo's code and docs; model weights and the pinned upstream
+Apache-2.0 for this repo's code and docs; model weights and the pinned upstream
 packages (SAM3, Grounding DINO, cuRobo, …) keep their own licenses — see
 [gap/NOTICE.md](https://github.com/graph-robots/graph-as-policy/blob/main/NOTICE.md) for the attribution table.
+
+> **Respect the original skill developers' licenses.** Skills in this library
+> may wrap, port, or build on code published by third-party skill developers.
+> The original developer's license always governs that skill's code: keep the
+> upstream license and attribution in the skill's folder, preserve them when
+> redistributing, and check them before commercial use. Contributions that
+> derive from existing work must declare their provenance and include the
+> original license alongside the skill.
