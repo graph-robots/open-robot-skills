@@ -11,6 +11,8 @@ gap:
   allowed_tools:
     - geometry.top_down_grasp_candidates
     - robot.go_to_pose
+    - robot.go_to_pose_cartesian
+    - robot.get_ee_pose
     - robot.open_gripper
     - robot.close_gripper
   exit_conditions:
@@ -36,6 +38,7 @@ gap:
       `validate=True` checkpoint (`target_held`). See `## Checkpoints` below.
   canonical_scripts:
     - compute_align_pose: scripts/compute_align_pose.py
+    - execute_grasp_align: scripts/execute_grasp_align.py
     - plan_to_pose: scripts/plan_to_pose.py
   references:
     - title: Why pre-rotate-then-descend instead of blended rotate+descend?
@@ -81,9 +84,21 @@ State details:
    `scripts/<sg>/compute_align_pose.py` (from this bundle's
    `canonical_scripts`). Inputs:
    `grasp_pose = Ref("compute_grasp.candidates.poses.0")`,
-   `target_obb = Ref("in.target_obb")`. Returns `align_pose`.
-4. **`rotate_align`** — `type: tool`, `tool: "robot.go_to_pose"`,
-   `inputs: { pose: Ref("compute_align.align_pose") }`.
+   `target_obb = Ref("in.target_obb")`, the selected `grasp_profile`, and
+   `arm_id`. Returns the corrected `grasp_pose` and its `align_pose`. The
+   correction aligns the embodiment's calibrated closing axis to the
+   perceived OBB short axis and keeps the fingertips above the support.
+4. **`rotate_align`** — `type: script`, file
+   `scripts/<sg>/execute_grasp_align.py` (from this bundle's
+   `canonical_scripts`). Inputs:
+   `pose = Ref("compute_align.align_pose")` and an optional declarative
+   `grasp_profile`. The script verifies the reached translation and both
+   grasp-frame axes. A pose that already passes is never disturbed; a pose
+   that would fail verification receives Cartesian correction before the
+   failure is reported. For a large translation residual, recovery first
+   translates at the controller's current wrist orientation and then corrects
+   rotation, avoiding an otherwise infeasible combined Cartesian move near a
+   workspace boundary.
 5. **`descend`** — `type: tool`, `tool: "robot.go_to_pose"`,
    `inputs: { pose: Ref("compute_grasp.candidates.poses.0") }`.
 6. **`close`** — `type: tool`, `tool: "robot.close_gripper"`, `inputs: { settle_steps: 60 }`.
@@ -114,6 +129,26 @@ State details:
    Do NOT skip the `compute_align` + `rotate_align` states — a direct
    `robot.go_to_pose` to the grasp pose blends rotation and descent and
    twists the gripper against the object.
+
+## Declarative grasp profile
+
+The caller should provide one selected `grasp_profile` containing
+`approach_clearance_m`, `position_tolerance_m`, `angular_tolerance_deg`, and
+`cartesian_recovery_threshold_m`. Set `use_embodiment_calibration: true` to
+align the perceived short axis through `robot.grasp_frame` and enforce the
+reported finger reach/clearance; otherwise the supplied grasp candidate's
+rotation and height are preserved. These values describe gripper clearance and
+grasp-region tolerance; the canonical scripts never select behavior from an
+object or task name. Functional-feature exclusion and preferred grasp regions
+belong to upstream object-feature perception. `target_kind + grasp_profiles`
+is accepted only as a compatibility adapter for already-materialized graphs.
+Set `cartesian_recovery_on_verification_failure: false` only when a platform
+cannot safely make the short local correction; it defaults to true and is
+entered exclusively for an arrival that would otherwise fail verification.
+
+Both canonical scripts accept `arm_id`; all gripper metadata, grasp-frame
+calibration, motion, and verification calls use that arm. This makes the same
+skill valid for either side of a dual-arm embodiment.
 
 ## Required end states
 

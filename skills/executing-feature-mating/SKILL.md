@@ -7,6 +7,7 @@ gap:
   allowed_tools:
     - robot.get_ee_pose
     - robot.execute_trajectory
+    - robot.describe_arm
     - robot.go_to_pose
     - robot.go_to_pose_cartesian
     - robot.move_cartesian_until_contact
@@ -20,6 +21,10 @@ gap:
     blocked: A waypoint or release motion failed before completion.
   required_inputs:
     placement_plan: PoseSequence
+    relation: string
+  produces_outputs:
+    final_pose: Se3Pose
+    fallback_count: int
   canonical_scripts:
     - execute_waypoints: scripts/execute_waypoints.py
     - release_and_retract: scripts/release_and_retract.py
@@ -46,7 +51,9 @@ execute_waypoints -> release -> placed
 ```
 
 - `execute_waypoints` runs `scripts/execute_waypoints.py` with
-  `placement_plan = Ref("in.placement_plan")`. Use `planned_joint` for a
+  `placement_plan = Ref("in.placement_plan")`. It also accepts `relation`,
+  `contact_profile`, `arm_id`, and `registration_uncertainty_m`. Use
+  `planned_joint` for a
   collision-aware transit, `planned_linear` for an orientation-locked
   approach/insertion, and `contact_seat` only for the final intended-contact
   leg. The plan carries its collision world and attached-object spheres.
@@ -57,6 +64,14 @@ execute_waypoints -> release -> placed
 - `release` runs `scripts/release_and_retract.py` with the final waypoint pose.
 - Route any raised motion error through `on_error: blocked`.
 
+Every completed leg returns a report containing its waypoint index and mode,
+attempt count, translational and rotational residual, contact status, and any
+fallback used. Profiles declare tolerances, retry budgets, contact margins,
+release settling, and retreat geometry. Do not select these values from object
+or task names. Registration uncertainty is diagnostic by default; a profile
+may use it upstream to generate a wider-clearance plan, but execution must not
+silently loosen pose acceptance because perception is uncertain.
+
 ## Boundaries
 
 - This skill does not infer fixture geometry or choose feature landmarks.
@@ -64,5 +79,6 @@ execute_waypoints -> release -> placed
 - Preserve the waypoint order. Insertion plans encode clearance first, mating
   second, seating third; shortcutting between them can cross solid geometry.
 - Never fall back to unchecked robot motion after a collision-aware planner
-  rejects a waypoint.
+  rejects a waypoint unless the plan/profile explicitly authorizes a bounded
+  local Cartesian recovery and the executor verifies the resulting pose.
 - Use `transporting-objects` for bins, baskets, and unconstrained surface drops.

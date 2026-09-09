@@ -1,0 +1,31 @@
+{
+  "skill": "perceiving-relational-correspondences",
+  "inputs": {
+    "sources": "CandidateSet",
+    "destinations": "CandidateSet",
+    "relation": "RelationSpec"
+  },
+  "outputs": {"pairs": {"$ref": "match.pairs"}},
+  "nodes": {
+    "match": {
+      "type": "script",
+      "script": "scripts/match_candidates.py",
+      "inputs": {
+        "sources": {"$ref": "in.sources"},
+        "destinations": {"$ref": "in.destinations"},
+        "relation": {"$ref": "in.relation"}
+      }
+    },
+    "paired": {"type": "noop"},
+    "finished": {"type": "noop"},
+    "ambiguous": {"type": "noop"},
+    "not_found": {"type": "noop"},
+    "cardinality_mismatch": {"type": "noop"}
+  },
+  "edges": [["START", "match"], ["paired", "END"], ["finished", "END"], ["ambiguous", "END"], ["not_found", "END"], ["cardinality_mismatch", "END"]],
+  "conditional_edges": {
+    "match": {"router_field": "status", "mapping": {"paired": "paired", "finished": "finished", "ambiguous": "ambiguous", "not_found": "not_found", "cardinality_mismatch": "cardinality_mismatch"}}
+  },
+  "exit": {"router_field": null, "success_values": ["paired", "finished", "ambiguous", "not_found", "cardinality_mismatch"]},
+  "on_error": "ambiguous"
+}

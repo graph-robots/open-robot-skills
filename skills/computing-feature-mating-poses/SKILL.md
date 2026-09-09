@@ -1,12 +1,12 @@
 ---
 name: computing-feature-mating-poses
-description: Compute desired approach and mate geometry from held and fixture features, resolving free mate symmetries from the current robot pose without executing motion.
+description: Computes desired approach and mate geometry from held and fixture features, resolving free mate symmetries from the current robot pose without executing motion. Use when a typed manipulation relation must become metric approach, engagement, and seated poses.
 license: Apache-2.0
 compatibility: requires gap>=0.1
 metadata: {category: planning, tags: [fixture, insertion, hanging, geometry]}
 gap:
   allowed_tools: [robot.get_ee_pose, geometry.compute_feature_mate]
-  required_inputs: {held_feature_in_tcp: Se3Pose, fixture_feature: FunctionalFeature, relation: string, attached_object: AttachedObject}
+  required_inputs: {held_feature_in_tcp: Se3Pose, fixture_feature: Se3Pose, relation: string, attached_object: AttachedObject}
   produces_outputs: {mate_pose: Se3Pose, approach_pose: Se3Pose, engaged_pose: Se3Pose, approach_axis: Vec3, seating_distance: float, minimum_clearance: float}
   exit_conditions:
     computed: A valid mate was computed.
@@ -43,6 +43,17 @@ pointing outward from the mounting surface, `radius_outer`, and the observed
 center the shaft inside the loop during crossing, travel to a stable interior
 shaft position, and then seat the loop without requiring an object-specific
 target point.
+
+For shaft/aperture relations, the fixture axis points into the opening and an
+optional `insertion_depth` advances both engaged and mate poses along that
+axis. The approach pose remains on the free side. This convention applies to
+containers, sockets, holes, and other apertures without object-name branches.
+
+An optional nested `mating_profile` on the fixture feature describes measured
+execution compensation without naming an object class. Supported fields are
+`settling_axis`, per-pose `crossing_offsets_m`, `seated_radial_offset_m`, and
+`mate_settling_offset_m`. These are graph-owned fixture/compliance parameters;
+the canonical algorithm never infers a profile from a radius or object name.
 
 ## Outputs
 

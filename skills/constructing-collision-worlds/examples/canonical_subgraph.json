@@ -1,0 +1,33 @@
+{
+  "skill": "constructing-collision-worlds",
+  "inputs": {
+    "cameras": "CameraFrame[]",
+    "object_masks": "ObjectMask[]",
+    "robot_spheres": "CollisionSphere[]"
+  },
+  "outputs": {"world_config": {"$ref": "filter.world_config"}},
+  "nodes": {
+    "build": {
+      "type": "tool",
+      "tool": "geometry.build_world_config",
+      "inputs": {
+        "cameras": {"$ref": "in.cameras"},
+        "object_masks": {"$ref": "in.object_masks"},
+        "robot_spheres": {"$ref": "in.robot_spheres"},
+        "voxel_size": 0.008,
+        "noise_eps": 0.025,
+        "noise_min_samples": 4,
+        "mesh_alpha": 0.04
+      }
+    },
+    "filter": {
+      "type": "script",
+      "script": "scripts/filter_mesh_components.py",
+      "inputs": {"world_config": {"$ref": "build.config"}}
+    },
+    "built": {"type": "noop"}
+  },
+  "edges": [["START", "build"], ["build", "filter"], ["filter", "built"], ["built", "END"]],
+  "exit": {"router_field": null, "success_values": ["built"]},
+  "on_error": "failed"
+}

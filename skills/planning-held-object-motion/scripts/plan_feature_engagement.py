@@ -1,4 +1,4 @@
-"""Turn typed feature-mate geometry into a typed fixture-engagement plan."""
+"""Canonical relation-to-engagement planner from planning-held-object-motion."""
 from typing import Any, TypedDict
 from gap import NodeContext
 
@@ -14,10 +14,15 @@ def run(ctx: NodeContext, approach_pose: dict[str, Any], engaged_pose: dict[str,
     if relation not in supported:
         raise ValueError(f"unsupported feature relation {relation!r}")
     waypoints = [{"pose": approach_pose, "mode": "planned_joint"}]
-    if relation in {"loop_over_shaft", "feature_to_fixture"}:
-        # Crossing a peg/hook is the intended contact operation. A free-space
-        # planner may correctly classify the engaged endpoint as collision;
-        # execute the short local legs with the bounded contact servo instead.
+    if relation == "loop_over_shaft":
+        # The engaged pose is on the board side of the hook tip.  It is a
+        # crossing motion, not a seating motion: stopping on first contact can
+        # leave the loop balanced against the distal tip without enclosing the
+        # shaft.  Track this short segment explicitly, then use contact-aware
+        # motion only while lowering the already-crossed loop onto the shaft.
+        waypoints.append({"pose": engaged_pose, "mode": "cartesian_cross"})
+        waypoints.append({"pose": mate_pose, "mode": "contact_seat"})
+    elif relation == "feature_to_fixture":
         waypoints.append({"pose": engaged_pose, "mode": "contact_seat"})
         waypoints.append({"pose": mate_pose, "mode": "contact_seat"})
     else:

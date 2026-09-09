@@ -1,0 +1,35 @@
+{
+  "skill": "perceiving-relational-correspondences",
+  "inputs": {
+    "observation": "Observation",
+    "instruction": "string",
+    "source_categories": "list",
+    "source_workspace": "dict",
+    "correspondence_axis": "string",
+    "arm_partition": "dict"
+  },
+  "outputs": {
+    "status": {"$ref": "select.status"},
+    "source_id": {"$ref": "select.source_id"},
+    "source_mask": {"$ref": "select.target_mask"},
+    "correspondence_anchor": {"$ref": "select.destination_anchor_y"},
+    "arm_id": {"$ref": "select.arm_id"}
+  },
+  "nodes": {
+    "select": {
+      "type": "script",
+      "script": "scripts/select_next_source.py",
+      "inputs": {
+        "observation": {"$ref": "in.observation"},
+        "instruction": {"$ref": "in.instruction"},
+        "source_categories": {"$ref": "in.source_categories"},
+        "source_workspace": {"$ref": "in.source_workspace"},
+        "correspondence_axis": {"$ref": "in.correspondence_axis"},
+        "arm_partition": {"$ref": "in.arm_partition"}
+      }
+    }
+  },
+  "edges": [["START", "select"], ["select", "END"]],
+  "exit": {"router_field": "status", "success_values": ["found", "finished"]},
+  "on_error": "ambiguous"
+}

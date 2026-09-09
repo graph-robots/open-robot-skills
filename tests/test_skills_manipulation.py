@@ -610,6 +610,8 @@ class TestTransportingObjects:
         ctx = FakeContext({
             "robot.go_to_pose_cartesian": None,
             "robot.open_gripper": {"position": 1.0},
+            "robot.get_ee_pose": {"pose": _pose(0.5, -0.2, 0.2)},
+            "robot.wait_steps": None,
             "robot.go_home": None,
         })
         release.run(ctx, drop_position=_vec3(0.5, -0.2, 0.2))
@@ -620,10 +622,16 @@ class TestTransportingObjects:
         assert order == [
             "robot.go_to_pose_cartesian",
             "robot.open_gripper",
+            "robot.get_ee_pose",
+            "robot.go_to_pose_cartesian",
+            "robot.wait_steps",
             "robot.go_home",
         ]
-        cart_pose = ctx.calls_to("robot.go_to_pose_cartesian")[0].kwargs["pose"]
-        assert cart_pose["position"] == _vec3(0.5, -0.2, 0.2)
+        cartesian_calls = ctx.calls_to("robot.go_to_pose_cartesian")
+        assert cartesian_calls[0].kwargs["pose"]["position"] == _vec3(0.5, -0.2, 0.2)
+        assert cartesian_calls[1].kwargs["pose"]["position"] == _vec3(0.5, -0.2, 0.25)
+        assert all(call.kwargs["arm_id"] == 0 for call in cartesian_calls)
+        assert ctx.calls_to("robot.wait_steps")[0].kwargs["steps"] == 12
         assert ctx.call_count("robot.execute_trajectory") == 0
 
 

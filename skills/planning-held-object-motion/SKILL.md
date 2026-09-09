@@ -9,7 +9,7 @@ gap:
     - motion.plan_joint
   required_inputs:
     held_feature_in_tcp: Se3Pose
-    fixture_feature: FunctionalFeature
+    fixture_feature: Se3Pose
     relation: string
     world_config: WorldConfig
     attached_object: AttachedObject
@@ -60,12 +60,27 @@ If uncertain, choose staged carry for a large orientation change or long held
 object. Do not add arbitrary midpoint waypoints and do not remove collision
 geometry to make direct planning succeed.
 
+The caller passes one selected declarative `motion_profile`, not an object
+class. `strategy` is either `direct_cartesian` or `staged_alignment`.
+The same profile also declares lift distance, time scale, per-phase speed,
+whether symmetry candidates require planner validation, Cartesian versus joint
+execution for each phase, and collision-world/attachment usage. This keeps the
+three-stage structure reusable while allowing a graph to preserve empirically
+validated execution behavior.
+
+`target_kind + motion_profiles` remains a compatibility adapter for existing
+materialized workflows. New graphs should resolve the profile in their
+declarative orchestration layer and pass `motion_profile` directly. Neither
+planning strategy contains semantic object-name branches.
+
 `plan_feature_engagement` converts the typed relation and the approach,
-engaged, and mate poses into execution semantics. `loop_over_shaft` uses
-contact-controlled engagement and seating because crossing the hook is the
-intended contact operation; aperture insertion uses goal-contact linear
-waypoints. The task graph therefore does not decide ad hoc whether a contact
-servo is needed.
+engaged, and mate poses into execution semantics. `loop_over_shaft` first uses
+an explicitly tracked `cartesian_cross` to pass the fixture's distal tip, then
+uses `contact_seat` only for the already-engaged settling motion. This prevents
+first contact at the tip from being mistaken for successful engagement.
+`feature_to_fixture` uses contact seating, while aperture insertion uses
+goal-contact linear waypoints. The task graph therefore does not decide ad hoc
+whether crossing or contact servo behavior is needed.
 
 ## Recommended skill sequence
 
@@ -80,8 +95,9 @@ servo is needed.
 
 Waypoint modes are semantic: `contact_transition` leaves the initial support,
 `planned_joint` is collision-aware free-space motion, `planned_linear` locks
-orientation for a straight local leg, and `contact_seat` is the final
-intentional-contact servo.
+orientation for a straight local leg, `cartesian_cross` explicitly tracks a
+short fixture-tip crossing, and `contact_seat` is the final intentional-contact
+servo.
 
 ## Boundaries
 
@@ -93,6 +109,8 @@ intentional-contact servo.
   checked for reachability and the smallest feasible TCP rotation is selected.
 - `support_normal` may be supplied when the escape direction is known; it
   defaults to world up for a horizontal support surface.
+- `arm_id` may be supplied explicitly and otherwise comes from the registered
+  attachment. Pose queries and optional reachability checks use the same arm.
 - Relationship-specific clearances may be supplied by the graph when fixture
   depth is observable or specified. Conservative geometric defaults are used
   otherwise.

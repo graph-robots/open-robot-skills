@@ -143,6 +143,12 @@ straight Cartesian line) over `descend_release` — the latter targets the
 panda_hand link and drops the ~0.10 m TCP offset, a common source of vertical
 placement misses.
 
+`descend_release_linear` accepts `arm_id`, uses that same arm for descent,
+release, pose feedback, and a short 50 mm vertical retract, then waits briefly
+before returning home. The retract keeps the gripper from striking or dragging
+the newly released object. These are execution-safety semantics rather than
+object-specific behavior and apply to either arm.
+
 **Hard rule — no re-perception of the container.** Do NOT add states
 named `re_perceive_container`, `reobserve_container`, `re_observe_*`,
 `re_filter_obb`, or any equivalent that re-detect the container. The

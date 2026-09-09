@@ -1,6 +1,6 @@
 ---
 name: executing-held-object-motion
-description: Execute an ordered, collision-aware pose sequence for an already-grasped rigid object without releasing it. Supports lifting from support, clear-space rotation, fixture transit, and orientation-locked local motion before insertion, mating, packing, or sorting.
+description: Executes an ordered pose sequence for an already-grasped rigid object without releasing it. Use for lifting, clear-space rotation, fixture transit, and bounded local approach motion before insertion, mating, packing, or sorting.
 compatibility: requires gap>=0.1
 metadata: {category: motion, tags: [motion, held-object, execution, reorientation, insertion, packing]}
 gap:
@@ -10,13 +10,18 @@ gap:
     - robot.execute_trajectory
     - robot.go_to_pose
     - robot.go_to_pose_cartesian
+    - robot.get_ee_pose
   exit_conditions:
     reoriented: The held-object waypoint sequence completed while the gripper remained closed.
     blocked: A waypoint motion failed before the requested orientation was reached.
   required_inputs:
     reorientation_plan: PoseSequence
+  produces_outputs:
+    final_pose: Se3Pose
+    fallback_count: int
   canonical_scripts:
     - execute_reorientation: scripts/execute_reorientation.py
+    - execute_approach: scripts/execute_approach.py
   streaming: false
 ---
 
@@ -49,6 +54,14 @@ every planned leg and never replaces a rejected collision-aware plan with an
 unchecked move. Use `contact_transition` only for the initial support escape;
 use `planned_joint` for clear-space rotation/transit and `planned_linear` for
 an orientation-locked straight leg.
+
+For the final free-space approach before re-observation, use
+`scripts/execute_approach.py` with a placement plan. Both executors accept an
+optional `arm_id`, declarative `execution_profile`, and
+`registration_uncertainty_m`, and report pose residuals, attempts, and typed
+fallbacks for every executed leg. A profile may authorize Cartesian fallback
+only for a bounded, verified local correction; it must not infer policy from an
+object or task name.
 
 ## Boundaries
 
