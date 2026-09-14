@@ -112,6 +112,20 @@ Both need a connector whose `motion.plan_to_pose` accepts `hold_position` and
 `seed_joints` and whose `motion.plan_linear` accepts `start` and `seed_joints`.
 RoboSimStudio's connector does; the library's `tools/curobo` does not.
 
+On a connector that does not, the call itself is refused (`ToolArgumentError`
+for an undeclared argument, `KeyError` for an unregistered tool), and the
+executor falls back instead of routing `blocked`:
+
+| Refused | Then |
+| --- | --- |
+| anything in the turn search (it only plans, so nothing has moved) | fly the turn waypoint's `clearance_first_fallback` legs, or, with none, the carry and the turn as plain waypoints |
+| `hold_position` | re-plan that turn, and every later one, without it (a free turn) |
+| `robot.forward_kinematics` after the carry | fly the chosen turn as planned, without the drift re-plan |
+
+Each waypoint flown that way reports `unsupported_fallback`
+(`clearance_first`, `plain_turn` or `free_turn`). A planner that answers
+`planned: false`, or fails for any other reason, still raises as before.
+
 `arrival_tolerance_m` / `arrival_tolerance_deg` (default unset) read the TCP
 after every waypoint and raise when it ended farther than either from the
 waypoint pose, so a lift that did not arrive routes to `blocked` rather than

@@ -533,3 +533,149 @@ def test_arrival_tolerance_raises_to_blocked_and_is_off_by_default():
         module.run(ctx(), plan, arrival_tolerance_m=0.003)
     report = module.run(ctx(), plan, arrival_tolerance_m=0.02)["waypoint_reports"][0]
     assert report["position_error_m"] == pytest.approx(0.01)
+
+
+# --- behaviour: falling back on a connector without the turn-search contract --------------------
+
+
+def _refusing(name):
+    """A planner response that refuses the extension arguments the way the tool registry does."""
+    from gap_core.errors import ToolArgumentError
+
+    def plan(**kwargs):
+        refused = sorted({"hold_position", "seed_joints", "start"} & set(kwargs))
+        if refused:
+            raise ToolArgumentError(name, f"does not accept {refused[0]!r}; its parameters are pose, world_config")
+        return _ok(((0.0, 0.0), (0.2, 0.2)))
+
+    return plan
+
+
+def _not_registered(name):
+    def missing(**_):
+        raise KeyError(f"Tool {name!r} not found (available: ['motion.plan_to_pose'])...")
+
+    return missing
+
+
+def _fallback_plan(with_legs=True):
+    plan = _search_plan()
+    flipped = Rotation.from_euler("x", 180, degrees=True)
+    if with_legs:
+        plan["waypoints"][2]["clearance_first_fallback"] = [
+            {"pose": pose(0.2, 0.0, 0.55, Rotation.identity()), "mode": "planned_joint", "cartesian": False,
+             "use_attachment": False},
+            {"pose": pose(0.4, 0.0, 0.48, flipped), "mode": "planned_joint", "cartesian": False},
+        ]
+    return plan
+
+
+def _fallback_ctx(**overrides):
+    from gap.testing.fakes import FakeContext
+
+    responses = {
+        "robot.describe_arm": LIMITS,
+        "robot.get_ee_pose": {"pose": pose(0.2, 0.0, 0.55, Rotation.from_euler("x", 180, degrees=True))},
+        "robot.go_to_pose_cartesian": {},
+        "robot.execute_trajectory": {},
+        "robot.forward_kinematics": {"joint_config": [0.1, 0.1]},
+        "motion.plan_to_pose": _refusing("motion.plan_to_pose"),
+        "motion.plan_linear": _refusing("motion.plan_linear"),
+    }
+    responses.update(overrides)
+    return FakeContext(responses)
+
+
+def test_carry_then_turn_embeds_the_clearance_first_legs_as_its_fallback():
+    from gap.testing.fakes import FakeContext
+
+    module = _load(CLEARANCE, "clearance_fallback_legs")
+    tilted = Rotation.from_euler("x", 90, degrees=True)
+
+    def ctx():
+        return FakeContext({"robot.get_ee_pose": {"pose": pose(0.2, 0.1, 0.5, tilted)},
+                           "motion.plan_joint": _plan_joint_ok})
+
+    fixture = {"pose": pose(0.4, 0.0, 0.3), "axis": {"x": 0.0, "y": 0.0, "z": -1.0}}
+    args = (pose(z=0.1), fixture, "shaft_into_aperture", {"meshes": []},
+            {"frame": "tcp", "spheres": [{"center": [0, 0, 0], "radius": 0.01}]})
+    profile = {"strategy": "carry_then_turn", "cartesian_transit": True, "max_attempts": 2}
+    carried = module.run(ctx(), *args, motion_profile=profile)["reorientation_plan"]["waypoints"]
+    cleared = module.run(ctx(), *args, motion_profile={**profile, "strategy": "clearance_first"})
+    cleared = cleared["reorientation_plan"]["waypoints"]
+    assert carried[2]["clearance_first_fallback"] == cleared[1:]
+    assert carried[0] == cleared[0]
+    assert all("clearance_first_fallback" not in leg for leg in cleared)
+
+
+def test_a_refused_turn_search_flies_the_clearance_first_legs():
+    module = _load(REORIENT, "reorient_fallback_legs")
+    ctx = _fallback_ctx()
+    plan = _fallback_plan()
+    out = module.run(ctx, plan)
+    reports = out["waypoint_reports"]
+    assert [r["index"] for r in reports] == [0, 1, 2]
+    assert "unsupported_fallback" not in reports[0]
+    assert [r["unsupported_fallback"] for r in reports[1:]] == ["clearance_first", "clearance_first"]
+    assert all("turn_search" not in r for r in reports)
+    plans = [r.kwargs for r in ctx.calls_to("motion.plan_to_pose")]
+    flown = [k for k in plans if not {"hold_position", "seed_joints"} & set(k)]
+    fallback = plan["waypoints"][2]["clearance_first_fallback"]
+    assert [k["pose"] for k in flown[-2:]] == [leg["pose"] for leg in fallback]
+    assert flown[-2]["attached_object"] is None  # the rotate leg keeps its own use_attachment
+    assert len(ctx.calls_to("robot.execute_trajectory")) == 2
+    assert not ctx.calls_to("robot.forward_kinematics")
+    assert out["final_pose"] == fallback[1]["pose"]
+    assert "clearance_first_fallback" in plan["waypoints"][2]  # the caller's plan is not rewritten
+
+
+def test_an_unregistered_search_tool_without_legs_flies_the_carry_then_a_free_turn():
+    module = _load(REORIENT, "reorient_plain_turn")
+    ctx = _fallback_ctx(**{"robot.describe_arm": _not_registered("robot.describe_arm")})
+    out = module.run(ctx, _fallback_plan(with_legs=False))
+    reports = out["waypoint_reports"]
+    assert [r.get("unsupported_fallback") for r in reports] == [None, "plain_turn", "free_turn"]
+    holds = [r.kwargs for r in ctx.calls_to("motion.plan_to_pose") if "hold_position" in r.kwargs]
+    assert len(holds) == 1  # asked once, refused, then re-planned without it
+    last = ctx.calls_to("motion.plan_to_pose")[-1].kwargs
+    assert "hold_position" not in last and last["pose"] == _search_plan()["waypoints"][2]["pose"]
+    assert len(ctx.calls_to("robot.execute_trajectory")) == 2
+
+
+def test_hold_position_is_asked_once_per_run_once_refused():
+    module = _load(REORIENT, "reorient_hold_once")
+    ctx = _fallback_ctx()
+    plan = {"waypoints": [{"pose": pose(z=0.5), "mode": "planned_joint", "hold_position": True},
+                          {"pose": pose(z=0.6), "mode": "planned_joint", "hold_position": True}]}
+    reports = module.run(ctx, plan)["waypoint_reports"]
+    assert [r["unsupported_fallback"] for r in reports] == ["free_turn", "free_turn"]
+    assert sum("hold_position" in r.kwargs for r in ctx.calls_to("motion.plan_to_pose")) == 1
+    assert len(ctx.calls_to("robot.execute_trajectory")) == 2
+
+
+def test_an_unregistered_joint_read_back_turns_as_planned():
+    module = _load(REORIENT, "reorient_no_fk")
+    values = [0.98] * 12
+    values[_yaw_index(30)] = 0.75
+    ctx = _search_ctx(values, live=(0.9, 0.9))
+    ctx._responses["robot.forward_kinematics"] = _not_registered("robot.forward_kinematics")
+    chosen = module.run(ctx, _search_plan())["waypoint_reports"][-1]["turn_search"]
+    assert (chosen["yaw_deg"], chosen["replanned"]) == (30.0, False)
+    assert len(ctx.calls_to("robot.execute_trajectory")) == 2
+
+
+def test_a_failure_that_is_not_a_contract_refusal_still_blocks():
+    module = _load(REORIENT, "reorient_real_failure")
+
+    def broken(**kwargs):
+        if "hold_position" in kwargs:
+            raise RuntimeError("CUDA error: an illegal memory access was encountered")
+        return _ok(((0.0, 0.0), (0.1, 0.1)))
+
+    ctx = _fallback_ctx(**{"motion.plan_to_pose": broken})
+    with pytest.raises(RuntimeError, match="CUDA error"):
+        module.run(ctx, _fallback_plan())
+    assert not ctx.calls_to("robot.execute_trajectory")
+    refused = _fallback_ctx(**{"motion.plan_to_pose": {"planned": False}, "motion.plan_linear": {"planned": False}})
+    with pytest.raises(RuntimeError, match="no carry and wrist yaw"):
+        module.run(refused, _fallback_plan())

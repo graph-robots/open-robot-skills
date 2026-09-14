@@ -81,6 +81,11 @@ with `executing-held-object-motion` to execute the carry plan and
   `hold_position` and `seed_joints`** -- RoboSimStudio's does, the library's
   `tools/curobo` does not. Use it when a large turn at the pickup, or the
   planner's smallest-turn yaw, leaves the engagement near a joint limit.
+  The turn waypoint also carries `clearance_first_fallback`: the rotate and
+  transit legs `clearance_first` would emit from the same escape point. When
+  the connector refuses `hold_position`, `seed_joints` or a search tool at the
+  call, the executor flies those instead of routing `blocked`, so the plan
+  degrades to `clearance_first` rather than failing.
 
 `accept_unchecked_symmetry` (default `False`) keeps the plan when every symmetry
 candidate fails the `motion.plan_joint` check, using the smallest turn

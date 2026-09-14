@@ -40,6 +40,24 @@ them executes exactly as before:
   ``start`` and ``seed_joints`` (the sharps benchmark's runtime does; ``tools/curobo`` does
   not), plus ``robot.describe_arm`` and ``robot.forward_kinematics``.
 
+A connector without them refuses the call itself -- the tool registry raises
+``ToolArgumentError`` for an argument a tool does not declare, and ``KeyError``
+for a tool it does not register -- and the executor falls back rather than
+routing ``blocked`` (see ``_unsupported``; a planner that answers
+``planned: false``, or fails for any other reason, is not this):
+
+- the turn search refused before anything moved: the turn waypoint's
+  ``clearance_first_fallback`` legs are flown instead (``carry_then_turn``
+  embeds the plan ``clearance_first`` would have emitted from the same escape
+  point), or, with none, the carry and the turn as plain waypoints;
+- ``hold_position`` refused: that turn and any later one are re-planned without
+  it, a free turn;
+- ``robot.forward_kinematics`` refused after the carry: the chosen turn flies as
+  planned, without the drift re-plan.
+
+The report of every waypoint flown that way carries ``unsupported_fallback``
+(``clearance_first``, ``plain_turn`` or ``free_turn``); otherwise it is absent.
+
 Why the turn search (the sharps disposal graph, ``gap_perception_v2``,
 ``tray_clutter_t03``, 2026-09-13): the planner's smallest turn put the hand on
 the far side of the aperture from the base. The turn planned, but the insertion
@@ -148,6 +166,24 @@ def _path(result: dict[str, Any] | None) -> np.ndarray | None:
 
 def _trajectory(rows: np.ndarray) -> dict[str, Any]:
     return {"waypoints": [{"positions": row.tolist()} for row in rows]}
+
+
+def _unsupported(error: BaseException) -> bool:
+    """Whether *error* is the connector refusing a call's contract, not the planner failing.
+
+    The tool registry raises ``ToolArgumentError`` ("does not accept
+    'hold_position'") for an argument a tool never declared and ``KeyError``
+    ("Tool 'robot.forward_kinematics' not found") for a tool it does not
+    register; after an RPC hop, or from a plain Python callable, the same two
+    read as their messages. Matched by class name and message so the script
+    needs no import from the runtime's internals.
+    """
+    if any(cls.__name__ == "ToolArgumentError" for cls in type(error).__mro__):
+        return True
+    text = str(error)
+    if isinstance(error, KeyError):
+        return "not found" in text or "not registered" in text
+    return "does not accept" in text or "unexpected keyword argument" in text
 
 
 class _Search:
@@ -363,10 +399,10 @@ def run(
             **on_arm,
         )
 
-    skip: set[int] = set()
-    for index, waypoint in enumerate(waypoints):
-        if index in skip:
-            continue
+    hold_supported = True  # until the connector refuses hold_position once
+    index = 0
+    while index < len(waypoints):
+        waypoint = waypoints[index]
         final_pose = waypoint["pose"]
         mode = waypoint.get("mode")
         if mode is None:
@@ -374,26 +410,46 @@ def run(
         following = waypoints[index + 1] if index + 1 < len(waypoints) else None
         if mode == "planned_joint" and following is not None and following.get("turn_search"):
             # The carry and the turn after it are chosen together (``_Search``).
-            search = _Search(ctx, following["turn_search"], waypoint, following, world, attachment, on_arm)
-            carry_trajectory, best, log = search.run()
+            try:
+                search = _Search(ctx, following["turn_search"], waypoint, following, world, attachment, on_arm)
+                carry_trajectory, best, log = search.run()
+            except Exception as error:  # noqa: BLE001 -- only a contract refusal is handled; the rest re-raise
+                if not _unsupported(error):
+                    raise
+                # The search only plans, so nothing has moved since the previous
+                # waypoint: replace the carry and the turn, and fly the replacement.
+                legs = following.get("clearance_first_fallback")
+                label = "clearance_first" if legs else "plain_turn"
+                print(f"[execute_reorientation] turn search refused by the connector, flying {label}: {error}",
+                      flush=True)
+                if not legs:
+                    legs = [waypoint, {key: value for key, value in following.items() if key != "turn_search"}]
+                waypoints[index:index + 2] = [{**leg, "unsupported_fallback": label} for leg in legs]
+                continue
             turn, replanned = best["turn"], False
             if carry_trajectory is not None:
                 execute(carry_trajectory, scale)
                 position_error, rotation_error = errors(waypoint["pose"], index)
                 reports.append({"index": index, "mode": mode, "attempts": 1, "fallback": "none",
                                 "position_error_m": position_error, "rotation_error_deg": rotation_error})
-                live = np.asarray(ctx.tool("robot.forward_kinematics", **on_arm)["joint_config"], dtype=float)
-                planned_end = np.asarray(best["start"], dtype=float)
-                drift = float(np.max(np.abs(live[: len(planned_end)] - planned_end)))
-                if drift > float(search.options["replan_joint_tolerance_rad"]):
-                    rows = _path(search.plan_turn(best["pose"], best["hold"], None))
-                    if rows is not None:
-                        turn, replanned = _trajectory(rows), True
+                try:
+                    live = np.asarray(ctx.tool("robot.forward_kinematics", **on_arm)["joint_config"], dtype=float)
+                except Exception as error:  # noqa: BLE001 -- only a contract refusal is handled; the rest re-raise
+                    if not _unsupported(error):
+                        raise
+                    print(f"[execute_reorientation] no joint read-back, turning as planned: {error}", flush=True)
+                    live = None
+                if live is not None:
+                    planned_end = np.asarray(best["start"], dtype=float)
+                    drift = float(np.max(np.abs(live[: len(planned_end)] - planned_end)))
+                    if drift > float(search.options["replan_joint_tolerance_rad"]):
+                        rows = _path(search.plan_turn(best["pose"], best["hold"], None))
+                        if rows is not None:
+                            turn, replanned = _trajectory(rows), True
             in_place = best["strategy"] == "turn in place"
             stretch = float(search.options["turn_time_scale" if in_place else "reconfiguring_turn_time_scale"])
             execute(turn, max(scale, stretch))
             final_pose = best["pose"]
-            skip.add(index + 1)
             position_error, rotation_error = errors(final_pose, index + 1)
             reports.append({"index": index + 1, "mode": following.get("mode", "planned_joint"), "attempts": 1,
                             "fallback": "none", "position_error_m": position_error,
@@ -401,18 +457,25 @@ def run(
                             "turn_search": {"yaw_deg": best["yaw_deg"], "strategy": best["strategy"],
                                             "margin_rad": best["margin"], "turn_deg": best["turn_deg"],
                                             "replanned": replanned, "candidates": log}})
+            index += 2
             continue
+        note = ({"unsupported_fallback": waypoint["unsupported_fallback"]}
+                if "unsupported_fallback" in waypoint else {})
         if mode == "contact_transition":
             servo(final_pose, waypoint)
             position_error, rotation_error = errors(final_pose, index)
             reports.append({"index": index, "mode": mode, "attempts": 1, "fallback": "none",
-                            "position_error_m": position_error, "rotation_error_deg": rotation_error})
+                            "position_error_m": position_error, "rotation_error_deg": rotation_error, **note})
+            index += 1
             continue
         if mode not in {"planned_joint", "planned_linear"}:
             raise ValueError(f"unsupported reorientation waypoint mode {mode!r}")
         use_attachment = attachment if waypoint.get("use_attachment", True) else None
         use_world = world if waypoint.get("use_world", True) else None
         attempts = max(1, min(int(waypoint.get("max_attempts", 1)), 3))
+        asks_hold = mode == "planned_joint" and "hold_position" in waypoint
+        if asks_hold and not hold_supported:
+            note["unsupported_fallback"] = "free_turn"
         trajectory = None
         for _ in range(attempts):
             planner_tool = (
@@ -423,7 +486,7 @@ def run(
                 if mode == "planned_linear"
                 else {"pose": final_pose}
             )
-            if mode == "planned_joint" and "hold_position" in waypoint:
+            if asks_hold and hold_supported:
                 inputs["hold_position"] = bool(waypoint["hold_position"])
             inputs.update(
                 world_config=use_world,
@@ -433,7 +496,17 @@ def run(
                 contact_margin=float(waypoint.get("contact_margin", 0.005)),
                 **on_arm,
             )
-            result = ctx.tool(planner_tool, **inputs)
+            try:
+                result = ctx.tool(planner_tool, **inputs)
+            except Exception as error:  # noqa: BLE001 -- only a refused hold_position is retried
+                if "hold_position" not in inputs or not _unsupported(error):
+                    raise
+                print(f"[execute_reorientation] waypoint {index}: hold_position refused, turning freely: {error}",
+                      flush=True)
+                hold_supported = False
+                note["unsupported_fallback"] = "free_turn"
+                inputs.pop("hold_position")
+                result = ctx.tool(planner_tool, **inputs)
             trajectory = result.get("trajectory") if result.get("planned") else None
             if trajectory and trajectory.get("waypoints"):
                 break
@@ -456,7 +529,8 @@ def run(
             fallback = "none"
         position_error, rotation_error = errors(final_pose, index)
         reports.append({"index": index, "mode": mode, "attempts": attempts, "fallback": fallback,
-                        "position_error_m": position_error, "rotation_error_deg": rotation_error})
+                        "position_error_m": position_error, "rotation_error_deg": rotation_error, **note})
+        index += 1
 
     assert final_pose is not None
     return {

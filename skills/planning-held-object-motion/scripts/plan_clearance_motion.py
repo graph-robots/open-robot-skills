@@ -303,9 +303,22 @@ def run(
     escape_distance = max(0.04, max(extents, default=0.025) + 0.015)
     escape_position = current_position + escape_distance * normal
     rotate_pose = _pose(escape_position, goal_rotation)
+    escape_leg = _leg(_pose(escape_position, current_rotation), "contact_transition", profile,
+                      speed_key="lift_speed_scale")
     # A profile may ask for the in-place rotation, or the transit, to be a
     # Cartesian transition instead of a planned leg when the local volume is
     # known to be clear; unasked, both are planned as they always were.
+    reorient_mode = "contact_transition" if bool(profile.get("cartesian_reorient", False)) else "planned_joint"
+    transit_mode = "contact_transition" if bool(profile.get("cartesian_transit", False)) else "planned_joint"
+    clearance_legs = [
+        _leg(rotate_pose, reorient_mode, profile, speed_key="reorient_speed_scale",
+             use_attachment=bool(profile.get("reorient_use_attachment", False)),
+             **optional({"use_world": "reorient_use_world", "max_attempts": "max_attempts",
+                         "cartesian_fallback": "cartesian_fallback"})),
+        _leg(transit_pose, transit_mode, profile, speed_key="transit_speed_scale",
+             **optional({"use_attachment": "transit_use_attachment", "use_world": "transit_use_world",
+                         "max_attempts": "max_attempts", "cartesian_fallback": "transit_cartesian_fallback"})),
+    ]
     if strategy == "carry_then_turn":
         # Carry first, at the pick orientation, to the same hand position the
         # turn ends at: the turn is then a same-place rotation, not a second
@@ -328,13 +341,16 @@ def run(
                 "transit_target": [float(v) for v in feature_target],
                 "insert_depths_m": [float(d) for d in (_TURN_SEARCH_DEPTHS_M if depths is None else depths)],
             }
+        # A connector without ``hold_position`` / ``seed_joints`` refuses the turn
+        # at the call, before the arm has left the escape point; the executor then
+        # flies these instead -- exactly the legs ``clearance_first`` emits here.
+        turn_leg["clearance_first_fallback"] = clearance_legs
         return {
             "reorientation_plan": {
                 **plan_head,
                 "time_scale": float(profile.get("time_scale", 2.0)),
                 "waypoints": [
-                    _leg(_pose(escape_position, current_rotation), "contact_transition", profile,
-                         speed_key="lift_speed_scale"),
+                    escape_leg,
                     _leg(carry_pose, "planned_joint", profile, speed_key="transit_speed_scale",
                          **optional({"use_attachment": "transit_use_attachment", "use_world": "transit_use_world",
                                      "max_attempts": "max_attempts",
@@ -345,23 +361,11 @@ def run(
                 "attached_object": attached_object,
             }
         }
-    reorient_mode = "contact_transition" if bool(profile.get("cartesian_reorient", False)) else "planned_joint"
-    transit_mode = "contact_transition" if bool(profile.get("cartesian_transit", False)) else "planned_joint"
     return {
         "reorientation_plan": {
             **plan_head,
             "time_scale": float(profile.get("time_scale", 2.0)),
-            "waypoints": [
-                _leg(_pose(escape_position, current_rotation), "contact_transition", profile,
-                     speed_key="lift_speed_scale"),
-                _leg(rotate_pose, reorient_mode, profile, speed_key="reorient_speed_scale",
-                     use_attachment=bool(profile.get("reorient_use_attachment", False)),
-                     **optional({"use_world": "reorient_use_world", "max_attempts": "max_attempts",
-                                 "cartesian_fallback": "cartesian_fallback"})),
-                _leg(transit_pose, transit_mode, profile, speed_key="transit_speed_scale",
-                     **optional({"use_attachment": "transit_use_attachment", "use_world": "transit_use_world",
-                                 "max_attempts": "max_attempts", "cartesian_fallback": "transit_cartesian_fallback"})),
-            ],
+            "waypoints": [escape_leg, *clearance_legs],
             "world_config": world_config,
             "attached_object": attached_object,
         }
