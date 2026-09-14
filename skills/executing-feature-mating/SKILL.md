@@ -42,7 +42,10 @@ because the type registry names no bare list or record. A `contact_profile`
 `arm_id` names the hand on a bimanual cell; `verify_cartesian` and
 `measure_errors` turn on the TCP re-reads that fill the reports (they are
 recorded tool calls and are off unless asked). `robot.describe_arm` is called
-only under `verify_cartesian`, to learn whether the solver honours roll.
+only under `verify_cartesian`, to learn whether the solver honours roll. Three
+more are off unless asked for the same reason: `time_scale` and
+`verify_arrival` on `execute_placement_plan`, `retract_planner` on
+`release_and_retract` (below).
 
 # executing-feature-mating
 
@@ -94,6 +97,21 @@ executed with a 2 mm tracking tolerance and a 60-step-per-waypoint budget. A
 planner refusal raises; route it through `on_error: blocked`. Output:
 `final_pose: Se3Pose`, the last waypoint pose.
 
+Opt-in (defaults leave every call as above):
+
+- `time_scale` (default `1.0`, untouched): resample each planned trajectory to
+  `(n - 1) * time_scale + 1` joint waypoints by linear interpolation before
+  `robot.execute_trajectory`, so a per-waypoint step budget moves the arm
+  proportionally slower. The sharps graph inserted at `3.0`, with
+  `max_steps_per_waypoint: 180` in its `contact_profile` terms.
+- `verify_arrival` (default `false`): after each executed planner trajectory,
+  `robot.wait_steps` (`arrival_wait_steps`, 40) and `robot.get_ee_pose`, then
+  raise `... release prohibited` when the TCP is more than
+  `arrival_position_tolerance_m` (0.004) or `arrival_rotation_tolerance_deg`
+  (2.29, i.e. 0.04 rad) off the waypoint -- the three are `contact_profile`
+  keys. Route it through `on_error: blocked` so no release node runs. The
+  waypoint report gains `arrival_position_error_m` / `arrival_rotation_error_deg`.
+
 ### `release_and_retract`
 
 Runs `scripts/release_and_retract.py` with `final_pose` (the mate pose the
@@ -110,6 +128,28 @@ the graph reports success.
   released object.
 - Without `retreat_axis`: a plain vertical retreat of `retract_m` (or 0.08 m
   when unset), still never less than the attached extent plus 1 cm.
+
+Opt-in planned retract: `retract_planner: true` plans the retreat with
+`motion.plan_linear(orientation="lock", allow_start_contact=true,
+contact_margin=retract_contact_margin_m (0.008))` over `retract_ladder_m`
+(unset: `[0.16, 0.08]`, longest first) and executes the first rung that plans
+with `robot.execute_trajectory`. Each rung replaces `retract_m` and keeps every
+rule above (attached-extent floor, axis and reversal, vertical lift). When no
+rung plans -- refused, empty, or the planner raised -- the Cartesian servo
+retreat above runs unchanged, and its failure still raises. `release_report`
+gains `retreat_mode` (`planned_linear` or `cartesian`). The sharps graph ran it
+with `open_settle_steps: 100`, `settle_steps: 200`.
+
+## What the sharps_disposal fold added
+
+From RoboSimStudio `sharps_disposal/gap_perception_v2` (sweep s8: 16/30 trials,
+152/176 syringes), three opt-in switches and nothing else: `retract_planner`,
+because on `tray_clutter_t11` the servo stopped 102 mm short of a 160 mm rise
+with joint 2 0.096 rad from its limit after the syringe was already released;
+`verify_arrival`, because one episode opened the gripper 66 mm above the
+insertion target; and `time_scale`, the slower insertion that check was
+measured with. The graph's own release swallowed a failed servo fallback; this
+bundle keeps raising it, so `blocked` still means what its exit condition says.
 
 ## Boundaries
 
