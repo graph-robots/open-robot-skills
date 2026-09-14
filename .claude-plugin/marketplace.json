@@ -17,6 +17,7 @@
       "skills": [
         "./skills/anchoring-a-free-end",
         "./skills/computing-feature-mating-poses",
+        "./skills/counting-remaining-items",
         "./skills/executing-feature-mating",
         "./skills/executing-held-object-motion",
         "./skills/grasping-direct-ik",

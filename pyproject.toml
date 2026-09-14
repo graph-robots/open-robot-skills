@@ -66,6 +66,7 @@ plugging-a-cable-end = []
 reconstructing-collision-worlds = []
 verifying-grasps = []
 verifying-placement = []
+counting-remaining-items = []
 
 # Historical meta-extras: bundle deps now live in each bundle's own
 # pyproject.toml (synced via `gap skills install <name>`), so these are
