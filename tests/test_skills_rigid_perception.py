@@ -96,10 +96,14 @@ def test_functional_features_declares_six_scripts_and_two_exits(skills_registry)
 def test_new_rigid_bundles_declare_their_contracts(skills_registry):
     world = skills_registry.get("reconstructing-collision-worlds")
     assert set(world.meta.exit_conditions) == {"built", "failed"}
-    assert world.meta.requires.connector == ["motion.get_robot_collision_spheres"]
+    assert world.meta.requires.connector == [
+        "motion.get_robot_collision_spheres",
+        "motion.build_world_tsdf",
+    ]
     assert set(world.meta.allowed_tools) == {
         "sam3.segment_text",
         "motion.get_robot_collision_spheres",
+        "motion.build_world_tsdf",
         "geometry.build_world_config",
     }
     assert set(world.canonical_scripts) == {"build_collision_world"}
@@ -113,11 +117,21 @@ def test_new_rigid_bundles_declare_their_contracts(skills_registry):
     assert inputs["score_min"].default == pytest.approx(0.005)
 
     placement = skills_registry.get("verifying-placement")
-    assert set(placement.meta.exit_conditions) == {"verified", "not_placed"}
+    # clear / blocked / uncertain and robot.get_ee_pose since the multi-view
+    # mode (sharps-disposal fold, 2026-09-14); the default path still routes
+    # only verified / not_placed.
+    assert set(placement.meta.exit_conditions) == {
+        "verified",
+        "not_placed",
+        "clear",
+        "blocked",
+        "uncertain",
+    }
     assert placement.meta.requires is None or not placement.meta.requires.connector
     assert set(placement.meta.allowed_tools) == {
         "sam3.segment_text",
         "geometry.mask_to_world_points",
+        "robot.get_ee_pose",
     }
 
     sorting = skills_registry.get("perceiving-sorting-pairs")

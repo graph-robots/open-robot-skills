@@ -18,6 +18,20 @@ a recorded tool call and the promotion-parity gate compares call sequences:
   roll; a free wrist is judged on its tool axis alone.
 - ``measure_errors`` reads the TCP before and after every waypoint for the
   ``waypoint_reports`` output.
+- ``verify_arrival`` settles (``robot.wait_steps``) after every executed
+  planner trajectory, re-reads the TCP and raises ``... release prohibited``
+  when it is off the waypoint by more than ``arrival_position_tolerance_m`` /
+  ``arrival_rotation_tolerance_deg``. A tracked trajectory can end short of its
+  last waypoint; measured on the ``sharps_disposal`` benchmark (graph
+  ``gap_perception_v2``), one episode opened the gripper 66 mm above the
+  insertion target. The raise routes through ``on_error: blocked`` before any
+  release node runs. The graph checked 4 mm / 0.04 rad (2.3 deg) after 40 steps.
+
+One more is not a tool call but changes what is sent: ``time_scale`` resamples
+every planned trajectory to ``(n - 1) * time_scale + 1`` joint waypoints by
+linear interpolation before it is executed, so a controller that spends a
+fixed step budget per waypoint moves proportionally slower. The graph inserted
+at 3x. ``1.0`` (the default) sends the planner's trajectory untouched.
 """
 
 import math
@@ -62,6 +76,10 @@ _DEFAULT_PROFILE: dict[str, Any] = {
     "cartesian_position_tolerance_m": 0.015,
     "cartesian_rotation_tolerance_deg": 7.25,
     "local_cartesian_position_tolerance_m": 0.030,
+    # Only read under ``verify_arrival``.
+    "arrival_wait_steps": 40,
+    "arrival_position_tolerance_m": 0.004,
+    "arrival_rotation_tolerance_deg": math.degrees(0.04),
 }
 
 
@@ -101,6 +119,27 @@ def _orientation_ok(current: dict[str, Any], target: dict[str, Any], honours_rol
     return sum(a * b for a, b in axes) >= math.cos(math.radians(tolerance_deg))
 
 
+def _resample(trajectory: dict[str, Any], scale: float) -> dict[str, Any]:
+    """Linearly interpolate the joint rows to ``(n - 1) * scale + 1`` waypoints.
+
+    Only ``positions`` is interpolated; the trajectory's other top-level keys
+    (joint names and the like) are carried over.
+    """
+    rows = [[float(value) for value in waypoint["positions"]] for waypoint in trajectory["waypoints"]]
+    count = max(2, int((len(rows) - 1) * float(scale)) + 1)
+    if len(rows) < 2:
+        return dict(trajectory)
+    out = []
+    for index in range(count):
+        t = index * (len(rows) - 1) / (count - 1)
+        lower = min(int(math.floor(t)), len(rows) - 2)
+        frac = t - lower
+        out.append({"positions": [a + frac * (b - a) for a, b in zip(rows[lower], rows[lower + 1], strict=True)]})
+    resampled = dict(trajectory)
+    resampled["waypoints"] = out
+    return resampled
+
+
 def run(
     ctx: NodeContext,
     placement_plan: dict[str, Any],
@@ -110,6 +149,8 @@ def run(
     registration_uncertainty_m: float | None = None,
     verify_cartesian: bool = False,
     measure_errors: bool = False,
+    time_scale: float = 1.0,
+    verify_arrival: bool = False,
 ) -> Output:
     profile = dict(_DEFAULT_PROFILE)
     profile.update(contact_profile or {})
@@ -223,6 +264,8 @@ def run(
                     raise RuntimeError(
                         f"planner refused a typed fixture-engagement waypoint after {attempts} attempts"
                     )
+                if float(time_scale) != 1.0:
+                    trajectory = _resample(trajectory, float(time_scale))
                 ctx.tool(
                     "robot.execute_trajectory",
                     trajectory=trajectory,
@@ -230,6 +273,19 @@ def run(
                     max_steps_per_waypoint=int(profile["max_steps_per_waypoint"]),
                     **on_arm,
                 )
+                if verify_arrival:
+                    ctx.tool("robot.wait_steps", steps=int(profile["arrival_wait_steps"]))
+                    distance, dot = _pose_distance(ee_pose(), final_pose)
+                    angle = _angle_deg(dot)
+                    report.update(arrival_position_error_m=distance, arrival_rotation_error_deg=angle)
+                    if (
+                        distance > float(profile["arrival_position_tolerance_m"])
+                        or angle > float(profile["arrival_rotation_tolerance_deg"])
+                    ):
+                        raise RuntimeError(
+                            f"trajectory tracking failed at waypoint {index}: {distance * 1000:.1f} mm, "
+                            f"{angle:.1f} deg; release prohibited"
+                        )
         else:
             raise ValueError(f"unknown placement waypoint mode {mode!r}")
         if measure_errors:

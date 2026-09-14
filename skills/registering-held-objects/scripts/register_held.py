@@ -25,6 +25,21 @@ none of those apply without a profile.
 
 ``arm_id`` names the hand on a bimanual cell and is threaded as an ABSENT
 keyword when unset. It is never inferred from where the feature sits.
+
+Four opt-in parameters came from the sharps disposal graph
+(``gap_perception_v2``, ``map_syringe_to_hand.py``, sweep s8),
+where a syringe is verified in a Robotiq hand after the lift. Each defaults to
+the behaviour above:
+
+- ``held_candidate_cameras`` replaces "the top mask of the best-scoring
+  camera" with the cloud nearest the hand over every mask from the named
+  cameras, optionally gated to a rod's shape.
+- ``presence_only`` treats that observation as proof the object moved with
+  the hand and never lets it shift the carried feature.
+- ``snap_feature_axis_deg`` snaps the feature's z onto the nearest hand x/y
+  axis when it is already within that many degrees of one.
+- ``require_observed`` raises (``lost``) instead of retaining the grasp-time
+  transform at 0.25 when nothing was observed.
 """
 
 from functools import lru_cache
@@ -163,6 +178,95 @@ def _observed_tip_frame(
     if len(marker_points) < 6:
         return None
     return _directed_tip_frame(points, marker_points)
+
+
+def _nearest_held_candidate(
+    ctx: NodeContext,
+    cameras: list[dict[str, Any]],
+    camera_names: list[str],
+    query: str,
+    hand_position: np.ndarray,
+    *,
+    score_min: float,
+    max_results: int,
+    max_distance_m: float,
+    extent_m: float | None,
+    rod_length_range_m: list[float] | None,
+    rod_aspect_min: float,
+) -> tuple[float, dict[str, Any], np.ndarray] | None:
+    """The segmented cloud nearest the hand over every mask of the named cameras.
+
+    The held object is the one in the fingers, not the one SAM scores highest.
+    In the source graph a spare syringe 90 mm away scored within 0.01 of the
+    held one and the top mask was a coin flip; with 6+ syringes in the tray the
+    held one was not among SAM's top 8. So every candidate is back-projected
+    and the cloud nearest the TCP is kept -- the held barrel sits a couple of
+    centimetres from it, a spare tens (graph: 0.12 m, score floor 0.005:
+    confidence only admits a candidate, shape and proximity verify it).
+
+    ``extent_m`` trims points farther than that from the cloud's median before
+    the shape is read (graph: 0.10 m, a 150 mm syringe's half-length with room
+    for flange and cap). ``rod_length_range_m`` keeps a cloud whose 5th-95th
+    percentile length along its principal axis lies in the range and is at
+    least ``rod_aspect_min`` times its width (graph: 0.075-0.18 m, 3x).
+    """
+    best = None
+    best_distance = float(max_distance_m)
+    for camera in cameras:
+        if camera.get("name") not in camera_names:
+            continue
+        detected = ctx.tool("sam3.segment_text", image=camera["rgb"], query=query, max_results=max_results)
+        for mask, score in zip(detected.get("masks") or [], detected.get("scores") or [], strict=False):
+            if float(score) < score_min:
+                continue
+            cloud = ctx.tool(
+                "geometry.mask_to_world_points", mask=np.asarray(mask, dtype=np.uint8),
+                depth=camera["depth"], intrinsics=camera["intrinsics"], camera_pose=camera["pose"],
+            )["points"]
+            points = _points(cloud)
+            points = points[np.isfinite(points).all(axis=1)]
+            if len(points) < 20:
+                continue
+            if extent_m is not None:
+                points = points[np.linalg.norm(points - np.median(points, axis=0), axis=1) < extent_m]
+                if len(points) < 20:
+                    continue
+            if rod_length_range_m is not None:
+                centered = points - np.median(points, axis=0)
+                _, _, basis = np.linalg.svd(centered, full_matrices=False)
+                projection = centered @ basis.T
+                extent = np.percentile(projection, 95, axis=0) - np.percentile(projection, 5, axis=0)
+                low, high = float(rod_length_range_m[0]), float(rod_length_range_m[1])
+                if not (low <= extent[0] <= high and extent[0] >= rod_aspect_min * max(extent[1], 0.003)):
+                    continue
+            distance = float(np.linalg.norm(np.median(points, axis=0) - hand_position))
+            if distance < best_distance:
+                best, best_distance = (float(score), camera, points), distance
+    return best
+
+
+def _snap_to_hand_axis(feature_in_hand: np.ndarray, max_deg: float) -> np.ndarray:
+    """Rotate ``feature_in_hand`` so its z lies exactly on the nearest hand +-x/+-y axis.
+
+    A top-down pinch across a cylinder puts it along one jaw axis by
+    construction. Over 22 source-graph episodes (2026-09-09) the true barrel
+    sat 0.3-1.5 deg from the hand's y axis, while the overhead silhouette's SVD
+    pitched it by up to 4.3 deg; standing *that* axis up carried seven
+    syringes 7-8 deg off vertical and one (t20) struck the lid. An estimate
+    further than ``max_deg`` from every axis is left alone rather than trusted
+    (graph: 15 deg).
+    """
+    z = feature_in_hand[:3, 2] / max(float(np.linalg.norm(feature_in_hand[:3, 2])), 1.0e-12)
+    axes = [np.array(v, dtype=np.float64) for v in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0))]
+    target = max(axes, key=lambda a: float(a @ z))
+    angle = float(np.arccos(float(np.clip(target @ z, -1.0, 1.0))))
+    if np.degrees(angle) > max_deg or angle < 1.0e-6:
+        return feature_in_hand
+    pivot = np.cross(z, target)
+    pivot /= max(float(np.linalg.norm(pivot)), 1.0e-12)
+    snapped = feature_in_hand.copy()
+    snapped[:3, :3] = Rotation.from_rotvec(pivot * angle).as_matrix() @ feature_in_hand[:3, :3]
+    return snapped
 
 
 # --------------------------------------------------------------------------
@@ -451,6 +555,16 @@ def run(
     direction_marker_description: str = "",
     camera_name_filter: str = "eye_in_hand",
     arm_id: int | None = None,
+    held_candidate_cameras: list[str] | None = None,
+    held_score_min: float = 0.05,
+    held_max_results: int = 0,
+    held_max_distance_m: float = 0.30,
+    held_extent_m: float | None = None,
+    rod_length_range_m: list[float] | None = None,
+    rod_aspect_min: float = 3.0,
+    presence_only: bool = False,
+    snap_feature_axis_deg: float = 0.0,
+    require_observed: bool = False,
 ) -> Output:
     if attachment_source not in {"reference", "observed"}:
         raise ValueError("attachment_source must be 'reference' or 'observed'")
@@ -458,6 +572,12 @@ def run(
     strategy = str(profile.get("strategy", "semantic_feature"))
     if strategy not in {"semantic_feature", "cad_distal_loop", "planar_cad_landmark"}:
         raise ValueError(f"unsupported registration strategy {strategy!r}")
+    if presence_only and profile:
+        # The CAD strategies measure the object by construction; there is no
+        # presence-only reading of them.
+        raise ValueError("presence_only applies to the generic path; drop the registration_profile")
+    if rod_length_range_m is not None and len(rod_length_range_m) != 2:
+        raise ValueError("rod_length_range_m must be [min_length_m, max_length_m]")
     if arm_id is None and prior_attached_object is not None and "arm_id" in prior_attached_object:
         arm_id = int(prior_attached_object["arm_id"])
     on_arm: dict[str, Any] = {} if arm_id is None else {"arm_id": int(arm_id)}
@@ -527,7 +647,25 @@ def run(
 
     # ---- the generic path (main's body) ------------------------------------
     best = None
-    for camera in cameras:
+    observed = None
+    if held_candidate_cameras is not None:
+        # Nearest-to-hand search: the tip/no-prior query rule below applies.
+        if kind == "loop":
+            query = functional_feature.get("description") or object_description
+        elif kind == "tip" or prior_feature_in_tcp is None:
+            query = object_description
+        else:
+            query = functional_feature.get("description") or object_description
+        found = _nearest_held_candidate(
+            ctx, cameras, list(held_candidate_cameras), query, world_tcp[:3, 3],
+            score_min=float(held_score_min), max_results=int(held_max_results),
+            max_distance_m=float(held_max_distance_m), extent_m=held_extent_m,
+            rod_length_range_m=rod_length_range_m, rod_aspect_min=float(rod_aspect_min),
+        )
+        if found is not None:
+            best = (found[0], found[1], None)
+            observed = {"points": found[2]}
+    for camera in cameras if held_candidate_cameras is None else []:
         name = camera.get("name", "")
         if wrist_name and profile:
             # A profiled graph measures a held loop from the holding wrist only
@@ -554,16 +692,19 @@ def run(
     cloud = reference
     confidence = 0.25
     observed_points = None
-    if best is not None and best[0] >= 0.05:
+    # A nearest-to-hand candidate was already back-projected and passed its
+    # own score floor; the top-mask path is admitted at 0.05 as it always was.
+    if best is not None and (observed is not None or best[0] >= 0.05):
         confidence = best[0]
         camera, mask = best[1], best[2]
-        observed = ctx.tool(
-            "geometry.mask_to_world_points",
-            mask=np.asarray(mask, dtype=np.uint8),
-            depth=camera["depth"],
-            intrinsics=camera["intrinsics"],
-            camera_pose=camera["pose"],
-        )["points"]
+        if observed is None:
+            observed = ctx.tool(
+                "geometry.mask_to_world_points",
+                mask=np.asarray(mask, dtype=np.uint8),
+                depth=camera["depth"],
+                intrinsics=camera["intrinsics"],
+                camera_pose=camera["pose"],
+            )["points"]
         points = _points(observed)
         if len(points) >= 8:
             accept_observed = True
@@ -581,8 +722,15 @@ def run(
                 cloud = observed
                 observed_points = points
     reliable_registration = best is not None and best[0] >= 0.20 and not preserve_wrench_prior
+    if presence_only:
+        # The observation proves the object moved with the hand; it does not
+        # move the carried feature. In the source graph a wrist-cloud projection
+        # changed the along-shaft tip distance from 46-65 mm to 9-18 mm because
+        # a partial mask's median was taken for the shaft origin, and partial
+        # post-lift masks carried tray or gripper pixels.
+        reliable_registration = False
     tip_frame = None
-    if kind == "tip" and direction_marker_description and observed_points is not None:
+    if kind == "tip" and direction_marker_description and observed_points is not None and not presence_only:
         tip_frame = _observed_tip_frame(ctx, best[1], observed_points, direction_marker_description)
 
     overview_loop = None
@@ -655,7 +803,16 @@ def run(
                 world_feature[:3, 3] += correction
             else:
                 confidence = 0.25
-    feature_tcp = _pose(np.linalg.inv(world_tcp) @ world_feature)
+    if require_observed and observed_points is None and overview_loop is None and (
+        scissors_registration is None and (wrench_registration is None or wrench_confidence <= 0.25)
+    ):
+        raise RuntimeError(
+            f"held {object_description!r} not observed: no accepted cloud follows the hand"
+        )
+    feature_in_hand = np.linalg.inv(world_tcp) @ world_feature
+    if snap_feature_axis_deg > 0.0:
+        feature_in_hand = _snap_to_hand_axis(feature_in_hand, float(snap_feature_axis_deg))
+    feature_tcp = _pose(feature_in_hand)
 
     preserve_prior = False
     if profile and prior_feature_in_tcp is not None:

@@ -1,4 +1,19 @@
-"""Release at the mate, then retreat away from the fixture without sweeping it."""
+"""Release at the mate, then retreat away from the fixture without sweeping it.
+
+**The planned retract (opt-in).** ``retract_planner=True`` asks the planner for
+the retreat as an orientation-locked ``motion.plan_linear`` line (start contact
+allowed: the open fingers still touch the released object) over a ladder of
+distances, longest first, executes the first that plans with
+``robot.execute_trajectory``, and only when every rung is refused sends the
+Cartesian servo to the retreat it always used. Measured on the
+``sharps_disposal`` benchmark (graph ``gap_perception_v2``, ``tray_clutter_t11``, sweep s2):
+the hand ends an insertion low over the box with the shoulder near its limit --
+joint 2 0.096 rad from its upper limit -- and the servo gave up 102 mm short of
+a 160 mm rise, aborting the episode with the syringe already released. The
+ladder the graph ran from sweep s2 through s8 is (0.16, 0.08). Off by default:
+a planner call is a recorded tool call, and graphs that did not ask keep the
+servo.
+"""
 
 from typing import Any, TypedDict
 
@@ -15,6 +30,10 @@ _CLEARANCE_MARGIN_M = 0.01
 _INSERTED_RELATIONS = frozenset({"shaft_into_aperture", "tip_through_aperture", "insert_through"})
 #: How much of the retreat distance is also taken straight up.
 _VERTICAL_RETREAT_FRACTION = 0.5
+#: Planned-retract distances, longest first, and the start-contact margin the
+#: graph planned them with. Only read under ``retract_planner``.
+_RETRACT_LADDER_M = (0.16, 0.08)
+_RETRACT_CONTACT_MARGIN_M = 0.008
 
 
 class Output(TypedDict):
@@ -34,6 +53,9 @@ def run(
     settle_steps: int = 120,
     arm_id: int | None = None,
     contact_profile: dict[str, Any] | None = None,
+    retract_planner: bool = False,
+    retract_ladder_m: list[float] | None = None,
+    retract_contact_margin_m: float = _RETRACT_CONTACT_MARGIN_M,
 ) -> Output:
     """Open, back off along the fixture axis, and let the object come to rest.
 
@@ -55,6 +77,16 @@ def run(
     both the replay gate and ``tools/graph_ab.py`` compare names *and* keyword
     values. Single-arm graphs therefore replay byte-identically while a
     bimanual one passes a hand.
+
+    ``retract_planner`` plans the retreat instead (see the module docstring).
+    Each rung of ``retract_ladder_m`` (unset: 0.16 then 0.08 m) replaces
+    ``retract_m`` as the asked distance and keeps every other rule -- the
+    attached-extent floor, the axis and its reversal, the vertical lift -- so
+    a rung never retreats less than the servo would. The rung distances are
+    planned with ``contact_margin=retract_contact_margin_m``. When no rung
+    plans (a refusal, an empty trajectory, or a planner that raises), the
+    servo retreat below runs unchanged. ``release_report`` then
+    also carries ``retreat_mode`` (``planned_linear`` or ``cartesian``).
     """
     profile = contact_profile or {}
     held = attached_object or {}
@@ -63,7 +95,7 @@ def run(
 
     release_steps = int(profile.get("release_settle_steps", open_settle_steps))
     ctx.tool("robot.open_gripper", settle_steps=release_steps, **on_arm)
-    retreat = {
+    start = {
         "position": dict(final_pose["position"]),
         "rotation": dict(final_pose["rotation"]),
     }
@@ -83,32 +115,62 @@ def run(
         ),
         default=0.0,
     )
-    asked = float(profile.get("retract_m", retract_m))
-    minimum = asked if asked > 0.0 else _DEFAULT_RETRACT_M
     clearance = float(profile.get("object_clearance_m", _CLEARANCE_MARGIN_M))
-    distance = max(minimum, extent + clearance)
-    for key, component in zip(("x", "y", "z"), axis, strict=True):
-        retreat["position"][key] = float(
-            float(retreat["position"][key]) + distance * float(component)
-        )
-    if retreat_axis is not None:
-        # Lift while backing off along the fixture axis so the open fingers
-        # clear the released object instead of dragging it along the fixture.
-        rise = float(profile.get("vertical_retreat_fraction", _VERTICAL_RETREAT_FRACTION))
-        retreat["position"]["z"] = float(retreat["position"]["z"]) + rise * distance
-    ctx.tool("robot.go_to_pose_cartesian", pose=retreat, **on_arm)
+
+    def retreat_by(asked: float) -> tuple[dict[str, Any], float]:
+        minimum = asked if asked > 0.0 else _DEFAULT_RETRACT_M
+        distance = max(minimum, extent + clearance)
+        pose = {"position": dict(start["position"]), "rotation": dict(start["rotation"])}
+        for key, component in zip(("x", "y", "z"), axis, strict=True):
+            pose["position"][key] = float(
+                float(pose["position"][key]) + distance * float(component)
+            )
+        if retreat_axis is not None:
+            # Lift while backing off along the fixture axis so the open fingers
+            # clear the released object instead of dragging it along the fixture.
+            rise = float(profile.get("vertical_retreat_fraction", _VERTICAL_RETREAT_FRACTION))
+            pose["position"]["z"] = float(pose["position"]["z"]) + rise * distance
+        return pose, distance
+
+    retreat: dict[str, Any] = start
+    distance = 0.0
+    planned_mode: str | None = None
+    if retract_planner:
+        planned_mode = "cartesian"
+        rungs = _RETRACT_LADDER_M if retract_ladder_m is None else retract_ladder_m
+        tried: list[float] = []
+        for rung in rungs:
+            pose, rung_distance = retreat_by(float(rung))
+            if rung_distance in tried:
+                continue  # the extent floor collapsed two rungs onto one line
+            tried.append(rung_distance)
+            try:
+                plan = ctx.tool(
+                    "motion.plan_linear", end=pose, orientation="lock", allow_start_contact=True,
+                    contact_margin=float(retract_contact_margin_m), **on_arm,
+                )
+            except Exception as error:  # noqa: BLE001 -- a raise is a refusal; the servo remains
+                print(f"[release_and_retract] planned retract of {rung_distance:.3f} m failed: {error}", flush=True)
+                continue
+            trajectory = (plan or {}).get("trajectory") if (plan or {}).get("planned") else None
+            if trajectory and trajectory.get("waypoints"):
+                ctx.tool("robot.execute_trajectory", trajectory=trajectory, **on_arm)
+                retreat, distance, planned_mode = pose, rung_distance, "planned_linear"
+                break
+    if planned_mode != "planned_linear":
+        retreat, distance = retreat_by(float(profile.get("retract_m", retract_m)))
+        ctx.tool("robot.go_to_pose_cartesian", pose=retreat, **on_arm)
     # Let the released object come to rest before the graph reports success:
     # a freshly released object can still be swinging on its fixture.
     wait_steps = int(profile.get("post_release_wait_steps", settle_steps))
     ctx.tool("robot.wait_steps", steps=wait_steps)
-    return {
-        "released": True,
-        "retreat_pose": retreat,
-        "release_report": {
-            "relation": relation,
-            "arm_id": int(arm) if arm is not None else 0,
-            "release_settle_steps": release_steps,
-            "retreat_distance_m": distance,
-            "post_release_wait_steps": wait_steps,
-        },
+    report: dict[str, Any] = {
+        "relation": relation,
+        "arm_id": int(arm) if arm is not None else 0,
+        "release_settle_steps": release_steps,
+        "retreat_distance_m": distance,
+        "post_release_wait_steps": wait_steps,
     }
+    if planned_mode is not None:
+        report["retreat_mode"] = planned_mode
+    return {"released": True, "retreat_pose": retreat, "release_report": report}

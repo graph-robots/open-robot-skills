@@ -76,6 +76,25 @@ the lifted hand. Every failed gate returns `route: not_held` with a `reason`.
 dozen wrist pixels and true positives score in the hundredths. Confidence
 admits a candidate; geometry decides.
 
+### Look-alikes in view (opt-in)
+
+Folded in from RoboSimStudio's `sharps_disposal/gap_perception_v2` (sweep s8),
+whose lifted wrist looks down on a tray still holding the held syringe's twins.
+They are large, well-lit, and outscore the foreshortened one between the
+fingers: on `tray_clutter_t03` the held syringe came back fourth, 23 mm from
+the hand, behind three tray syringes 217-281 mm away. Each option is off by
+default:
+
+| input | default | effect |
+|---|---|---|
+| `max_masks_per_query` | `3` | `max_results` asked of `sam3.segment_text`; `0` = every mask |
+| `nearest_to_hand` | `false` (top mask of the first query/camera decides) | every mask at or above `score_min` is back-projected and the one nearest the lifted hand, across all queries and cameras so far, is judged; it returns as soon as that one passes, in the same query order, and asks `robot.describe_workspace` only once a candidate has a cloud |
+| `max_span_m` / `max_width_m` | `None` | a cloud longer or wider than one object is not a candidate (in top-1 mode: `not_held`, "larger than one object"). Keeps the arm's own mask out |
+
+The graph ran `nearest_to_hand` with `max_masks_per_query: 0`, `0.25` m / `0.06` m
+and `lift_m: 0` (it lifts in its own node). The routing is unchanged: every
+failed gate is `not_held` with a `reason`.
+
 ## Boundaries
 
 - The lift in `verify_grasp` is the only motion any of the three makes; the
