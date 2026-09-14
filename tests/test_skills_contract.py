@@ -31,13 +31,6 @@ FORBIDDEN = ("robosimstudio", "tasks/", "/home/")
 UNTYPED_RETURN_RATCHET = frozenset(
     {
         "perceiving-next-item::decide_next_item",
-        "tipping-over-a-surface-edge::approach",
-        "tipping-over-a-surface-edge::check",
-        "tipping-over-a-surface-edge::lift",
-        "tipping-over-a-surface-edge::pinch",
-        "tipping-over-a-surface-edge::press_pull",
-        "tipping-over-a-surface-edge::read_scene",
-        "tipping-over-a-surface-edge::release",
     }
 )
 
