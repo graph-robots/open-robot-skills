@@ -1,6 +1,6 @@
 """Plan lift, minimum reorientation, and orientation-locked fixture transit.
 
-Three strategies, the first two unchanged from before the profile existed:
+Four strategies, the first two unchanged from before the profile existed:
 
 - ``clearance_first`` (default): escape along the support normal, rotate in
   place to the least wrist turn that a planner check accepts, then transit to
@@ -11,6 +11,28 @@ Three strategies, the first two unchanged from before the profile existed:
   ``approach_pose`` with the collision world and attachment left out -- for a
   pickup near a reach boundary where a planned leg keeps refusing a start
   state the executor can simply servo out of.
+- ``carry_then_turn``: escape, carry to the staging position still in the
+  pick orientation (a planned joint leg), then turn in place there (a planned
+  joint leg flagged ``hold_position``). The turn waypoint carries a
+  ``turn_search`` block, which ``executing-held-object-motion`` uses to choose
+  the carry and the wrist yaw together by planning them, insertion strokes
+  and retract included. Needs a connector whose ``motion.plan_to_pose``
+  accepts ``hold_position`` and ``seed_joints``.
+
+Why ``carry_then_turn`` exists (the ``sharps_disposal`` benchmark,
+``gap_perception_v2``). The reference scripted policy for that suite carries
+the syringe to the box in its pick orientation and only turns it upright once
+parked next to the box; rotating upright over the tray and then carrying it
+vertical was the opposite order. ``hold_position`` keeps the solver from
+re-resolving the whole arm into an unrelated elbow configuration for what is a
+pure in-place turn: without it one joint landed 35 deg from the equivalent
+solve and 4/4 fresh runs lost the insertion. The smallest-turn yaw this
+planner picks is only checked with the lenient ``motion.plan_joint``; on
+``tray_clutter_t03`` it left the insertion strokes 2-6 mrad from a joint limit
+and cuRobo refused them, while yaws +110..+160 deg had 0.4-0.7 rad of margin.
+So the yaw is re-chosen live by the executor, and this pose is its fallback
+geometry. The transit leg is a free joint goal rather than an axis-locked
+line: five ``motion.plan_linear`` transit runs all executed a 390-570 mm climb.
 
 A graph that carries one profile per object kind passes ``motion_profile``
 (or a ``motion_profiles`` table keyed by ``target_kind``). The profile's
@@ -22,6 +44,13 @@ particular ``speed_scale``, ``use_world``, ``max_attempts`` and
 because the executor only forwards what a waypoint carries, and a graph that
 never asked for a speed must not start passing one. ``arm_id`` is likewise
 threaded only when set.
+
+``accept_unchecked_symmetry`` (default off) keeps a plan when every symmetry
+candidate fails the ``motion.plan_joint`` check, taking the smallest turn
+unchecked instead of raising. It is meant for ``carry_then_turn``, whose turn
+the executor re-plans anyway: sweep s5's ``t02`` aborted here when the lenient
+IK member rejected all eight headings. Left off, no feasible candidate still
+raises and routes to ``blocked``.
 """
 
 from typing import Any, TypedDict
@@ -36,7 +65,13 @@ class Output(TypedDict):
 
 
 _STRATEGY_ALIASES = {"staged_alignment": "clearance_first"}
-_STRATEGIES = {"clearance_first", "direct", "direct_cartesian"}
+_STRATEGIES = {"clearance_first", "direct", "direct_cartesian", "carry_then_turn"}
+
+#: The insertion ``plan_linear_engagement`` flies with ``stroke_depths_m``:
+#: 20 mm before the fixture plane, then 10 mm phases to it -- signed positions
+#: of the held feature along the fixture axis from its centre. The executor's
+#: turn search probes these strokes from each candidate's end joints.
+_TURN_SEARCH_DEPTHS_M = (-0.020, -0.010, 0.0)
 
 
 def _vec(value: dict[str, Any]) -> np.ndarray:
@@ -100,6 +135,9 @@ def run(
     target_kind: str = "",
     motion_profile: dict[str, Any] | None = None,
     motion_profiles: list[dict[str, Any]] | None = None,
+    accept_unchecked_symmetry: bool = False,
+    turn_search: bool = True,
+    turn_search_depths_m: list[float] | None = None,
 ) -> Output:
     profile = _resolve_profile(motion_profile, target_kind, motion_profiles)
     strategy = str(profile.get("strategy", strategy))
@@ -220,6 +258,7 @@ def run(
             feature_target = feature_target + outward_m * outward / outward_norm
     validate = bool(profile.get("validate_symmetry_with_planner", True))
     candidates = []
+    unchecked = []
     for angle in np.deg2rad([0.0, 45.0, -45.0, 90.0, -90.0, 135.0, -135.0, 180.0]):
         rotation = Rotation.from_rotvec(axis * float(angle)) * aligned
         hand_position = feature_target - rotation.apply(feature_offset)
@@ -227,6 +266,7 @@ def run(
         # Geodesic TCP rotation is the stable, robot-independent score. It
         # prevents symmetry from producing an arbitrary large wrist turn.
         turn = float((rotation * current_rotation.inv()).magnitude())
+        unchecked.append((turn, abs(float(angle)), candidate, rotation))
         if not validate:
             # A Cartesian-only profile deliberately never invokes the planner,
             # not even as a candidate filter; the Cartesian executor reports a
@@ -245,7 +285,9 @@ def run(
             continue
         candidates.append((turn, abs(float(angle)), candidate, rotation))
     if not candidates:
-        raise RuntimeError("no feasible orientation aligns the held feature with the fixture")
+        if not bool(profile.get("accept_unchecked_symmetry", accept_unchecked_symmetry)):
+            raise RuntimeError("no feasible orientation aligns the held feature with the fixture")
+        candidates = unchecked
     _, _, transit_pose, goal_rotation = min(candidates, key=lambda item: item[:2])
 
     def sphere_extent(sphere: dict[str, Any]) -> float:
@@ -264,6 +306,45 @@ def run(
     # A profile may ask for the in-place rotation, or the transit, to be a
     # Cartesian transition instead of a planned leg when the local volume is
     # known to be clear; unasked, both are planned as they always were.
+    if strategy == "carry_then_turn":
+        # Carry first, at the pick orientation, to the same hand position the
+        # turn ends at: the turn is then a same-place rotation, not a second
+        # lateral move disguised as one.
+        carry_pose = _pose(_vec(transit_pose["position"]), current_rotation)
+        turn_leg = _leg(transit_pose, "planned_joint", profile, speed_key="reorient_speed_scale",
+                        hold_position=True,
+                        **optional({"use_attachment": "reorient_use_attachment", "use_world": "reorient_use_world",
+                                    "max_attempts": "max_attempts", "cartesian_fallback": "cartesian_fallback"}))
+        if bool(profile.get("turn_search", turn_search)):
+            depths = profile.get("turn_search_depths_m", turn_search_depths_m)
+            turn_leg["turn_search"] = {
+                "fixture_center": [float(v) for v in fixture_center],
+                "axis": [float(v) for v in axis],
+                "feature_offset": [float(v) for v in feature_offset],
+                "feature_rotation": dict(held_feature_in_tcp["rotation"]),
+                "transit_clearance_m": clearance,
+                # Where the feature sits at the turn, with this planner's own
+                # staging sign and outward shift; the search stages there.
+                "transit_target": [float(v) for v in feature_target],
+                "insert_depths_m": [float(d) for d in (_TURN_SEARCH_DEPTHS_M if depths is None else depths)],
+            }
+        return {
+            "reorientation_plan": {
+                **plan_head,
+                "time_scale": float(profile.get("time_scale", 2.0)),
+                "waypoints": [
+                    _leg(_pose(escape_position, current_rotation), "contact_transition", profile,
+                         speed_key="lift_speed_scale"),
+                    _leg(carry_pose, "planned_joint", profile, speed_key="transit_speed_scale",
+                         **optional({"use_attachment": "transit_use_attachment", "use_world": "transit_use_world",
+                                     "max_attempts": "max_attempts",
+                                     "cartesian_fallback": "transit_cartesian_fallback"})),
+                    turn_leg,
+                ],
+                "world_config": world_config,
+                "attached_object": attached_object,
+            }
+        }
     reorient_mode = "contact_transition" if bool(profile.get("cartesian_reorient", False)) else "planned_joint"
     transit_mode = "contact_transition" if bool(profile.get("cartesian_transit", False)) else "planned_joint"
     return {

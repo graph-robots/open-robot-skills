@@ -22,7 +22,7 @@ gap:
     placement_plan: PoseSequence
   exit_conditions:
     planned: A carry plan or an engagement plan was produced.
-    blocked: No feasible symmetry-equivalent held-object orientation was found, or the direct strategy was requested without an approach pose.
+    blocked: No feasible symmetry-equivalent held-object orientation was found (unless accept_unchecked_symmetry), or the direct strategy was requested without an approach pose.
   canonical_scripts:
     - plan_clearance_motion: scripts/plan_clearance_motion.py
     - plan_feature_engagement: scripts/plan_feature_engagement.py
@@ -66,6 +66,27 @@ with `executing-held-object-motion` to execute the carry plan and
   support, the orientation change is small, and a single attached-object plan
   to the approach pose is appropriate; it requires `approach_pose`.
 
+- `"carry_then_turn"` escapes like clearance-first, then carries to the same
+  staging hand position still in the pick orientation (`planned_joint`), then
+  turns in place there (`planned_joint` with `hold_position: true`). The turn
+  waypoint carries a `turn_search` block (`fixture_center`, `axis`,
+  `feature_offset`, `feature_rotation`, `transit_clearance_m`,
+  `transit_target`, `insert_depths_m`) that `executing-held-object-motion`
+  uses to choose the carry and wrist yaw together by planning them, insertion
+  strokes and retract included; the planned smallest turn is only its
+  geometry. `insert_depths_m` defaults to `[-0.020, -0.010, 0.0]` (signed feature
+  positions along the fixture axis; set `turn_search_depths_m` to match the
+  engagement actually flown); `turn_search=False` emits only `hold_position`.
+  **This strategy needs a connector whose `motion.plan_to_pose` accepts
+  `hold_position` and `seed_joints`** -- RoboSimStudio's does, the library's
+  `tools/curobo` does not. Use it when a large turn at the pickup, or the
+  planner's smallest-turn yaw, leaves the engagement near a joint limit.
+
+`accept_unchecked_symmetry` (default `False`) keeps the plan when every symmetry
+candidate fails the `motion.plan_joint` check, using the smallest turn
+unchecked; left off, that still raises and routes to `blocked`. It is meant for
+`carry_then_turn`, whose turn is re-planned by the executor.
+
 If uncertain, choose the clearance-first strategy for a large orientation
 change or a long held object. Do not add arbitrary midpoint waypoints and do
 not remove collision geometry to make direct planning succeed.
@@ -89,6 +110,41 @@ holding the current orientation. Give it `observation` (the current
 re-observe the held tip from the wrist first: when both the object and its
 direction marker are visible, the endpoint of the object's principal axis
 toward the marker replaces the carried feature position.
+
+Opt-in additions to `plan_linear_engagement` (defaults leave the legs and calls
+as above):
+
+- `stroke_depths_m` (e.g. `[-0.020, -0.010, 0.0]`) replaces the two legs with
+  staged strokes to those signed depths along the fixture axis. The first uses
+  `first_stroke_mode` (`"planned_linear"` by default, or `"planned_joint"`);
+  the rest are `planned_linear` with start and goal contact allowed at
+  `stroke_contact_margin_m` (0.008).
+- `mirror_leading_end` aims whichever end of the held object leads along the
+  fixture axis, mirroring the carried feature through the TCP when it trails
+  (valid for a grasp at the object's middle). The wrist marker read then applies
+  only when the carried feature leads.
+- `leading_end_band_m: [min, max]` and `leading_end_max_lateral_m` (0.02) bound
+  where an aimed end may sit in the hand frame, ahead of the TCP along the
+  fixture axis; perceived ends outside are ignored. The sharps graph used
+  `[0.045, 0.11]` for a 150 mm syringe gripped near its centre.
+- `tip_source`: `"perception"` (default, perception replaces the carried
+  feature when seen) or `"carried_unless_implausible"` (keeps the carried
+  feature while it is inside the band; needs `leading_end_band_m`).
+- `side_camera_names` reads the leading end from those fixed cameras first
+  (segmenting `object_description` in a crop around the hand, keeping
+  rod-shaped detections aligned with the fixture axis within
+  `held_max_distance_m`, 0.15 m).
+
+The plan also carries additive, call-free keys: `aim_source` (`carried`,
+`carried_mirrored`, `side_view` or `wrist_tip`), `leading_end_in_hand`,
+`aperture` (the fixture centre), `fixture_axis` and `rim_z`.
+
+`carry_then_turn`, `accept_unchecked_symmetry` and the engagement additions
+were folded from RoboSimStudio `sharps_disposal/gap_perception_v2`
+(`plan_clearance_motion.py`, `plan_visual_insert.py`), measured in its sweep s8
+(16/30 cluttered trays, 152/176 syringes). The syringe prompts, camera name and
+45-110 mm band became parameters; the library's staging direction for
+`loop_over_shaft` is kept. The script docstrings carry the measurements.
 
 ## Recommended skill sequence
 
