@@ -24,6 +24,20 @@ and drive the approach-tube carve from its own ``approach_corridor`` block.
 Every profile key is optional and an absent key leaves the constant below in
 force, so a graph that passes no profile gets exactly the world and the calls
 it always got.
+
+**The TSDF world (opt-in).** ``tsdf=True`` (or a profile's ``strategy:
+rgbd_tsdf``) asks the connector's ``motion.build_world_tsdf`` for an ESDF voxel
+grid integrated on device instead of the alpha-shape meshes, and returns
+``{"use_tsdf": true, ...}``; the grid stays on the motion backend and a planner
+reaches it through that flag. The aperture corridor is cleared on the grid as a
+vertical cylinder. Measured on the ``sharps_disposal`` benchmark (graph
+``gap_perception_v2``): the CPU mesh path costs 42-44 s per episode on the
+overhead camera; the TSDF path is GPU kernels end to end. Whenever the tool is
+absent or fails -- or the request is one a flat mask list and vertical
+cylinders cannot express -- the mesh world below is built instead, and the
+fallback is printed: a silent one there spent a debugging session reading
+mesh-path timings as TSDF ones. Off by default, so no call changes for a graph
+that does not ask.
 """
 
 from typing import Any, TypedDict
@@ -261,6 +275,70 @@ def _vec(value: dict[str, float]) -> np.ndarray:
     return np.array([value[k] for k in ("x", "y", "z")], dtype=np.float64)
 
 
+#: TSDF defaults, the values the ``sharps_disposal/gap_perception_v2`` graph
+#: ran in sweep s8. Each one is a measured failure, recorded where it is used.
+_TSDF_VOXEL_SIZE_M = 0.01
+_TSDF_CLEAR_RADIUS_FACTOR = 1.1
+_TSDF_CLEAR_RADIUS_MIN_M = 0.05
+_TSDF_CLEAR_BELOW_RIM_M = 0.20
+_TSDF_CLEAR_ABOVE_RIM_M = 0.25
+
+
+def _tsdf_world(
+    ctx: NodeContext,
+    cameras: list[dict[str, Any]],
+    object_masks: list[dict[str, Any]],
+    keep_out: list[dict[str, Any]],
+    corridor_center: dict[str, float] | None,
+    corridor_radius: float,
+    corridor_rim_z: float,
+    settings: dict[str, Any],
+) -> dict[str, Any]:
+    """The backend's TSDF grid with the aperture corridor cleared; raises to fall back."""
+    if len(cameras) != 1:
+        # The tool zeroes every mask in every depth image of the same shape --
+        # it has no camera index -- so a mask from one view would erase free
+        # depth in another. One camera, as the graph ran it, or the mesh path.
+        raise ValueError(f"TSDF mode takes exactly one camera, {len(cameras)} selected")
+    clear = []
+    if corridor_center is not None and float(corridor_radius) > 0.0:
+        clear.append({
+            "x": float(corridor_center["x"]), "y": float(corridor_center["y"]),
+            # The corridor is for the *descent*, not the hole: the held object
+            # hangs below the TCP and the jaws straddle the rim, so the cleared
+            # cylinder spans the hand's approach (a 50 mm floor) rather than
+            # the aperture alone.
+            "radius": max(
+                float(settings.get("clear_radius_min_m", _TSDF_CLEAR_RADIUS_MIN_M)),
+                float(settings.get("clear_radius_factor", _TSDF_CLEAR_RADIUS_FACTOR)) * float(corridor_radius),
+            ),
+            # ...and down *through* the cavity, not merely to the rim. A mesh
+            # world leaves unseen interior space free; a TSDF assigns unseen
+            # voxels small distances, so a held syringe's tip 75 mm below the
+            # TCP at the approach waypoint, already inside the box's mouth,
+            # read as colliding and the planner refused a waypoint the mesh
+            # world had passed. The top reaches well above the rim, where the
+            # approach waypoint itself sits.
+            "z_lo": float(corridor_rim_z) - float(settings.get("clear_below_rim_m", _TSDF_CLEAR_BELOW_RIM_M)),
+            "z_hi": float(corridor_rim_z) + float(settings.get("clear_above_rim_m", _TSDF_CLEAR_ABOVE_RIM_M)),
+        })
+    summary = ctx.tool(
+        "motion.build_world_tsdf",
+        cameras=cameras,
+        exclude_masks=[entry["mask"] for entry in object_masks],
+        # 10 mm: an ESDF fattens every surface by about a voxel, and at 20 mm
+        # that sealed the aperture to a single cleared column -- the planner
+        # then refused the approach waypoint over the lid on a layout the mesh
+        # world had passed. The backend's default grid extent is kept: a
+        # taller grid left the carry detour statistically unchanged.
+        voxel_size=float(settings.get("voxel_size_m", _TSDF_VOXEL_SIZE_M)),
+        clear_cylinders=clear,
+    )
+    # Declared keep-out boxes ride beside the grid as meshes; the planner
+    # loads both into one scene.
+    return {"use_tsdf": True, "meshes": keep_out, "tsdf": summary}
+
+
 def _select_profile(target_kind: str, collision_profiles: list[dict[str, Any]] | None) -> dict[str, Any]:
     if not collision_profiles:
         return {}
@@ -291,6 +369,12 @@ def run(
     target_kind: str = "",
     collision_profiles: list[dict[str, Any]] | None = None,
     robot_spheres: list[dict[str, Any]] | None = None,
+    tsdf: bool = False,
+    tsdf_voxel_size: float = _TSDF_VOXEL_SIZE_M,
+    tsdf_clear_radius_factor: float = _TSDF_CLEAR_RADIUS_FACTOR,
+    tsdf_clear_radius_min_m: float = _TSDF_CLEAR_RADIUS_MIN_M,
+    tsdf_clear_below_rim_m: float = _TSDF_CLEAR_BELOW_RIM_M,
+    tsdf_clear_above_rim_m: float = _TSDF_CLEAR_ABOVE_RIM_M,
 ) -> Output:
     """Build the world from the selected views and carve the goal's free space.
 
@@ -308,12 +392,26 @@ def run(
     ``collision_profiles`` + ``target_kind`` select a profile (see the module
     docstring); ``robot_spheres`` supplies the robot's collision spheres when
     the caller already has them, instead of asking the planner.
+
+    ``tsdf`` asks ``motion.build_world_tsdf`` for the world instead (see the
+    module docstring) and returns ``strategy: rgbd_tsdf`` when it was built.
+    The corridor becomes one cleared cylinder of radius
+    ``max(tsdf_clear_radius_min_m, tsdf_clear_radius_factor * corridor_radius)``
+    from ``corridor_rim_z - tsdf_clear_below_rim_m`` to ``+ tsdf_clear_above_rim_m``.
+    It falls back to the mesh world, printing why, when the tool raises or is
+    absent, when more than one camera is selected, or when an approach tube is
+    requested (a tube along an arbitrary axis is not a vertical cylinder). A
+    profile's ``tsdf`` block overrides the tunables by ``voxel_size_m``,
+    ``clear_radius_factor``, ``clear_radius_min_m``, ``clear_below_rim_m`` and
+    ``clear_above_rim_m``.
     """
     profile = _select_profile(target_kind, collision_profiles)
     strategy = str(profile.get("strategy", "rgbd_mesh"))
     if strategy == "disabled":
         return {"world_config": {"meshes": []}, "mesh_names": [], "removed_mesh_names": [], "strategy": strategy}
-    if strategy != "rgbd_mesh":
+    if strategy == "rgbd_tsdf":
+        tsdf = True
+    elif strategy != "rgbd_mesh":
         raise ValueError(f"unsupported collision-world strategy {strategy!r}")
     exclusions = profile.get("excluded_masks") or {}
     reconstruction = profile.get("reconstruction") or {}
@@ -363,6 +461,36 @@ def run(
             )
             if robot_mask is not None:
                 object_masks.append({"name": f"robot_view_{index}", "mask": robot_mask, "camera_index": index})
+    tube_requested = fixture_tip is not None and fixture_axis is not None and corridor.get("enabled", True)
+    if tsdf:
+        settings = {
+            "voxel_size_m": tsdf_voxel_size,
+            "clear_radius_factor": tsdf_clear_radius_factor,
+            "clear_radius_min_m": tsdf_clear_radius_min_m,
+            "clear_below_rim_m": tsdf_clear_below_rim_m,
+            "clear_above_rim_m": tsdf_clear_above_rim_m,
+            **(profile.get("tsdf") or {}),
+        }
+        try:
+            if tube_requested:
+                raise ValueError("an approach tube along the fixture axis is not a vertical clear cylinder")
+            keep_out_meshes = _keep_out_boxes(profile)
+            world = _tsdf_world(
+                ctx, cameras, object_masks, keep_out_meshes,
+                corridor_center, corridor_radius, corridor_rim_z, settings,
+            )
+            return {
+                "world_config": world,
+                "mesh_names": [str(mesh["name"]) for mesh in keep_out_meshes],
+                "removed_mesh_names": [],
+                "strategy": "rgbd_tsdf",
+            }
+        except Exception as error:  # noqa: BLE001 -- every failure falls back, loudly
+            # Tool absent (a backend with no mapper) or integration failed:
+            # the mesh reconstruction below is the world the planner always had.
+            print(f"[build_collision_world] TSDF path unavailable ({error}); falling back to mesh reconstruction",
+                  flush=True)
+            strategy = "rgbd_mesh"
     if robot_spheres is None:
         # Capture robot geometry with the same observation. Unlike a
         # segmentation mask, this includes occluded and visually ambiguous
@@ -421,7 +549,7 @@ def run(
         else:
             cleaned.append(mesh)
     meshes = cleaned + _keep_out_boxes(profile)
-    if fixture_tip is not None and fixture_axis is not None and corridor.get("enabled", True):
+    if tube_requested:
         # The fixture contact zone is intentionally occupied at the goal, and
         # RGB-D alpha shapes can also bridge the thin free space around a
         # shaft. Carve only a narrow perceived approach tube ending at the

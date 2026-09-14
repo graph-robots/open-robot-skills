@@ -96,10 +96,14 @@ def test_functional_features_declares_six_scripts_and_two_exits(skills_registry)
 def test_new_rigid_bundles_declare_their_contracts(skills_registry):
     world = skills_registry.get("reconstructing-collision-worlds")
     assert set(world.meta.exit_conditions) == {"built", "failed"}
-    assert world.meta.requires.connector == ["motion.get_robot_collision_spheres"]
+    assert world.meta.requires.connector == [
+        "motion.get_robot_collision_spheres",
+        "motion.build_world_tsdf",
+    ]
     assert set(world.meta.allowed_tools) == {
         "sam3.segment_text",
         "motion.get_robot_collision_spheres",
+        "motion.build_world_tsdf",
         "geometry.build_world_config",
     }
     assert set(world.canonical_scripts) == {"build_collision_world"}
