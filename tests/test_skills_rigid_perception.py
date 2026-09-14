@@ -117,11 +117,21 @@ def test_new_rigid_bundles_declare_their_contracts(skills_registry):
     assert inputs["score_min"].default == pytest.approx(0.005)
 
     placement = skills_registry.get("verifying-placement")
-    assert set(placement.meta.exit_conditions) == {"verified", "not_placed"}
+    # clear / blocked / uncertain and robot.get_ee_pose since the multi-view
+    # mode (sharps-disposal fold, 2026-09-14); the default path still routes
+    # only verified / not_placed.
+    assert set(placement.meta.exit_conditions) == {
+        "verified",
+        "not_placed",
+        "clear",
+        "blocked",
+        "uncertain",
+    }
     assert placement.meta.requires is None or not placement.meta.requires.connector
     assert set(placement.meta.allowed_tools) == {
         "sam3.segment_text",
         "geometry.mask_to_world_points",
+        "robot.get_ee_pose",
     }
 
     sorting = skills_registry.get("perceiving-sorting-pairs")
