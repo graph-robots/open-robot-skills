@@ -436,6 +436,48 @@ def _wrist_clouds(ctx, cameras, wrist_name, profile, world_tcp, *, remote_fallba
     return clouds, scores
 
 
+def _first_pass_loop(ctx, prior: np.ndarray, ranked, first_cloud: dict[str, Any], profile: dict[str, Any]):
+    """The best-scoring loop mask whose fitted centre lies where the grasp left it.
+
+    On the first pass nothing but the carried pre-grasp perception says where
+    the loop is, and a language mask can rank the object's OTHER end first: from
+    the wrist camera a wrench's jaw opening reads as a "ring" within a few
+    hundredths of score of the ring itself, and sub-millimetre differences in
+    how the object sits in the jaws decide the order. A rigidly grasped loop
+    cannot be farther from its pre-grasp position than the profile's
+    ``maximum_translation_jump_m`` -- the bound the later passes already apply
+    -- so the masks are tried best-first and the first whose fitted centre lies
+    within it is the observation. Without a profile every mask qualifies, as
+    before. ``first_cloud`` is the cloud already lifted for the top mask.
+
+    Returns ``(aligned_frame, centre, cloud, score)``, or ``None`` when no
+    mask of reliable score fits.
+    """
+    bound = float(profile.get("maximum_translation_jump_m", 0.025)) if profile else float("inf")
+    for index, (score, camera, mask) in enumerate(ranked):
+        if score < 0.20:
+            break
+        if index == 0:
+            cloud = first_cloud
+        else:
+            cloud = ctx.tool(
+                "geometry.mask_to_world_points",
+                mask=np.asarray(mask, dtype=np.uint8),
+                depth=camera["depth"],
+                intrinsics=camera["intrinsics"],
+                camera_pose=camera["pose"],
+            )["points"]
+            if len(_points(cloud)) < 8:
+                continue
+        aligned, centre = _fit_loop_center(ctx, prior, cloud)
+        jump = float(np.linalg.norm(centre - prior[:3, 3]))
+        if jump <= bound:
+            return aligned, centre, cloud, score
+        print(f"[register_held] rejected loop mask {index} (score {score:.2f}): fitted centre "
+              f"{1000 * jump:.0f} mm from the pre-grasp loop, bound {1000 * bound:.0f} mm")
+    return None
+
+
 def run(
     ctx: NodeContext,
     cameras: list[dict[str, Any]],
@@ -527,6 +569,7 @@ def run(
 
     # ---- the generic path (main's body) ------------------------------------
     best = None
+    ranked: list[tuple[float, dict[str, Any], Any]] = []
     for camera in cameras:
         name = camera.get("name", "")
         if wrist_name and profile:
@@ -551,6 +594,11 @@ def run(
             score = float(result["scores"][0])
             if best is None or score > best[0]:
                 best = (score, camera, result["masks"][0])
+            ranked.extend(
+                (float(raw), camera, mask)
+                for mask, raw in zip(result["masks"], result["scores"], strict=False)
+            )
+    ranked.sort(key=lambda item: -item[0])
     cloud = reference
     confidence = 0.25
     observed_points = None
@@ -647,8 +695,18 @@ def run(
         if tip_frame is not None:
             world_feature = tip_frame
         elif reliable_registration and kind == "loop":
-            world_feature, observed_center = _fit_loop_center(ctx, world_feature, cloud)
-            world_feature[:3, 3] = observed_center
+            accepted = _first_pass_loop(ctx, world_feature, ranked, cloud, profile)
+            if accepted is None:
+                # No reliable mask put the loop where the pre-grasp perception
+                # left it: the semantic draw latched onto the object's other
+                # end. Keep the carried pre-grasp loop at fallback confidence
+                # rather than register a feature 20 cm from where it is.
+                reliable_registration = False
+                confidence = 0.25
+                cloud = reference
+            else:
+                world_feature, observed_center, cloud, confidence = accepted
+                world_feature[:3, 3] = observed_center
         elif reliable_registration:
             correction = np.median(_points(cloud), axis=0) - np.median(_points(reference), axis=0)
             if float(np.linalg.norm(correction)) <= 0.02:
