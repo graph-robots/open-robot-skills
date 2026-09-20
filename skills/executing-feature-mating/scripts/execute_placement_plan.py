@@ -199,15 +199,11 @@ def run(
                 trajectory = None
                 attempts = max(1, min(int(waypoint.get("max_attempts", profile["planner_attempts"])), 3))
                 for attempt in range(1, attempts + 1):
-                    tool = "motion.plan_linear" if mode == "planned_linear" else "motion.plan_to_pose"
-                    inputs = (
-                        {"end": final_pose, "orientation": "lock"}
-                        if mode == "planned_linear"
-                        else {"pose": final_pose}
-                    )
-                    result = ctx.tool(
-                        tool,
-                        **inputs,
+                    # Both branches name their tool literally: a call whose tool
+                    # name arrives in a variable cannot be checked against an
+                    # allowlist before the graph runs, and harnesses that check
+                    # one statically (gap-self-learning's guard) reject it.
+                    options = dict(
                         world_config=world,
                         attached_object=attachment if waypoint.get("use_attachment", True) else None,
                         allow_start_contact=bool(waypoint.get("allow_start_contact", False)),
@@ -215,6 +211,10 @@ def run(
                         contact_margin=float(waypoint.get("contact_margin", profile["contact_margin_m"])),
                         **on_arm,
                     )
+                    if mode == "planned_linear":
+                        result = ctx.tool("motion.plan_linear", end=final_pose, orientation="lock", **options)
+                    else:
+                        result = ctx.tool("motion.plan_to_pose", pose=final_pose, **options)
                     trajectory = result.get("trajectory") if result.get("planned") else None
                     report["attempts"] = attempt
                     if trajectory and trajectory.get("waypoints"):

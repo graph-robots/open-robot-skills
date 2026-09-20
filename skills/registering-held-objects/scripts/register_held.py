@@ -745,15 +745,20 @@ def run(
         # MORPHIT is cuRobo's fitter and lives in the curobo bundle; the CPU
         # geometry bundle fits the surface and voxel kinds.
         fit_kind = str(profile.get("attachment_fit_type", attachment_fit_type)).strip().lower()
-        attachment = ctx.tool(
-            "curobo.cloud_to_attachment" if fit_kind == "morphit" else "geometry.cloud_to_attachment",
+        # Both fitters are named literally, so a static allowlist check can read
+        # this call (gap-self-learning's guard rejects a tool name that arrives
+        # as an expression).
+        fit_options = dict(
             points=attachment_cloud,
             tcp_pose=ee,
             surface_radius=0.002,
             margin=0.002,
             max_spheres=64,
-            **({} if fit_kind == "morphit" else {"fit_type": fit_kind}),
-        )["attached_object"]
+        )
+        if fit_kind == "morphit":
+            attachment = ctx.tool("curobo.cloud_to_attachment", **fit_options)["attached_object"]
+        else:
+            attachment = ctx.tool("geometry.cloud_to_attachment", fit_type=fit_kind, **fit_options)["attached_object"]
     if preserve_prior and prior_object_in_tcp is not None:
         obj = world_tcp @ _matrix(prior_object_in_tcp)
     elif scissors_registration is not None:
