@@ -34,7 +34,6 @@ dependencies = [
 # `gap skills check` can map their bundle name -> install line if extras
 # are ever needed.
 perceiving-objects = []
-tipping-over-a-surface-edge = []
 placing-held-feature = []
 proposing-short-axis-grasps = []
 proposing-side-grasps = []
@@ -61,8 +60,6 @@ perceiving-deformable-linear-objects = []
 perceiving-routing-fixtures = []
 verifying-a-cable-route = []
 seating-a-cable-crossing = []
-anchoring-a-free-end = []
-plugging-a-cable-end = []
 reconstructing-collision-worlds = []
 verifying-grasps = []
 verifying-placement = []

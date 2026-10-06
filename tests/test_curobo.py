@@ -17,8 +17,6 @@ EXPECTED_TOOLS = {
     "curobo.plan_directed_linear",
     "curobo.plan_grasp_motion",
     "curobo.plan_to_pose",
-    "curobo.solve_ik",
-    "curobo.batch_grasp_feasibility",
     "curobo.validate_joint_trajectory_robot",
     "curobo.validate_joint_trajectory_grasped",
 }
@@ -120,13 +118,7 @@ def test_empty_trajectory_rejected_without_curobo(tool_registry):
             trajectory={"waypoints": [{"positions": _FRANKA_HOME}]},
             object_name="",
         )
-    with pytest.raises(ToolError):
-        tool_registry.invoke(
-            "curobo.batch_grasp_feasibility",
-            world_config={"meshes": []},
-            start_state={"positions": _FRANKA_HOME},
-            grasp_poses=[_pose(0.4, 0.0, 0.2)],
-        )
+
 
 
 @pytest.mark.gpu

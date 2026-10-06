@@ -34,6 +34,11 @@ logger = logging.getLogger(__name__)
 
 #: Torch device for both the image model and the video tracker.
 _DEVICE = os.environ.get("GAP_SAM3_DEVICE", "cuda")
+# One SAM3 server runs per simulation job, and torch sizes its CPU thread pool to every core
+# it can see (240 on the study box): sixty servers then fight over the machine for the CPU
+# side of each call. Cap the pool before torch is imported; GAP_SAM3_THREADS overrides.
+for _var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "TORCH_NUM_THREADS"):
+    os.environ.setdefault(_var, os.environ.get("GAP_SAM3_THREADS", "4"))
 
 #: Hugging Face repo id for SAM3 weights (image + video predictors share
 #: the same checkpoint).  Must match upstream sam3/model_builder.py

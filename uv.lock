@@ -916,9 +916,6 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "future", specifier = ">=0.18.2" },
     { name = "google-genai", marker = "extra == 'vertex'", specifier = ">=1.0,<1.60" },
-    { name = "graph-as-policy", extras = ["libero"], marker = "extra == 'grocery'" },
-    { name = "graph-as-policy", extras = ["libero"], marker = "extra == 'quickstart'" },
-    { name = "graph-as-policy", extras = ["libero", "ray", "vertex", "policy"], marker = "extra == 'all'" },
     { name = "graph-as-policy-core", editable = "../graph-as-policy/gap-core" },
     { name = "gym", specifier = "==0.25.2" },
     { name = "gymnasium", specifier = ">=0.29" },
@@ -934,9 +931,6 @@ requires-dist = [
     { name = "networkx", specifier = ">=3" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "nvidia-curobo", git = "https://github.com/NVlabs/curobo.git?rev=4ea77366ca48ee453e7df139e39fa6532af49f3b" },
-    { name = "open-robot-skills", extras = ["all"], marker = "extra == 'all'", editable = "." },
-    { name = "open-robot-skills", extras = ["grocery"], marker = "extra == 'grocery'", editable = "." },
-    { name = "open-robot-skills", extras = ["quickstart"], marker = "extra == 'quickstart'", editable = "." },
     { name = "opencv-python-headless", specifier = ">=4.9" },
     { name = "openpi-client", marker = "extra == 'policy'", git = "https://github.com/Physical-Intelligence/openpi.git?subdirectory=packages%2Fopenpi-client" },
     { name = "pillow", specifier = ">=10" },
@@ -958,7 +952,7 @@ requires-dist = [
     { name = "viser", specifier = ">=0.2.3" },
     { name = "yourdfpy", specifier = ">=0.0.56" },
 ]
-provides-extras = ["libero", "pyroki", "ray", "real", "vertex", "policy", "quickstart", "grocery", "all"]
+provides-extras = ["libero", "pyroki", "ray", "real", "vertex", "policy"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2699,7 +2693,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [{ name = "graph-as-policy", editable = "../graph-as-policy" }]
-provides-extras = ["perceiving-objects", "tipping-over-a-surface-edge", "placing-held-feature", "proposing-short-axis-grasps", "proposing-side-grasps", "selecting-reachable-grasp", "perceiving-objects-oneshot", "perceiving-object-parts", "perceiving-next-item", "perceiving-functional-features", "perceiving-relational-correspondences", "perceiving-sorting-pairs", "grasping-with-planner", "grasping-direct-ik", "grasping-short-axis", "grasping-linear-feature", "transporting-objects", "executing-feature-mating", "executing-held-object-motion", "planning-held-object-motion", "computing-feature-mating-poses", "registering-held-objects", "tracking-objects", "perceiving-deformable-linear-objects", "perceiving-routing-fixtures", "verifying-a-cable-route", "seating-a-cable-crossing", "anchoring-a-free-end", "plugging-a-cable-end", "reconstructing-collision-worlds", "verifying-grasps", "verifying-placement", "quickstart", "grocery", "all"]
+provides-extras = ["perceiving-objects", "placing-held-feature", "proposing-short-axis-grasps", "proposing-side-grasps", "selecting-reachable-grasp", "perceiving-objects-oneshot", "perceiving-object-parts", "perceiving-next-item", "perceiving-functional-features", "perceiving-relational-correspondences", "perceiving-sorting-pairs", "grasping-with-planner", "grasping-direct-ik", "grasping-short-axis", "grasping-linear-feature", "grasping-concave-contour", "transporting-objects", "executing-feature-mating", "executing-held-object-motion", "planning-held-object-motion", "computing-feature-mating-poses", "registering-held-objects", "tracking-objects", "perceiving-deformable-linear-objects", "perceiving-routing-fixtures", "verifying-a-cable-route", "seating-a-cable-crossing", "reconstructing-collision-worlds", "verifying-grasps", "verifying-placement", "quickstart", "grocery", "all"]
 
 [package.metadata.requires-dev]
 dev = [

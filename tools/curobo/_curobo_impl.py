@@ -2826,41 +2826,6 @@ def _apply_tcp_offset_inverse(
     return pos - R @ off
 
 
-def solve_ik(
-    target_position: np.ndarray,
-    target_quat_wxyz: np.ndarray,
-    *,
-    robot_file: str = "franka.yml",
-    seed_config: np.ndarray | None = None,
-    tcp_offset: np.ndarray | None = None,
-    num_seeds: int = 32,
-    position_threshold: float = 0.005,
-    rotation_threshold: float = 0.05,
-    tensor_args=None,
-) -> tuple[bool, np.ndarray | None]:
-    """Solve geometric IK for a single target TCP pose.
-
-    target_position, target_quat_wxyz: desired TCP pose in world frame.
-    tcp_offset: optional EE-link → TCP offset in EE link local frame. If given,
-        we subtract the rotated offset from target_position so that FK(EE-link)
-        + rotated-offset reaches the requested TCP.
-    seed_config: optional warm start. When provided, the solution that
-        minimizes joint-space distance to the seed is returned.
-    Returns (success, joint_config (dof,)) or (False, None).
-
-    NOT SUPPORTED on cuRobo v0.8: the v0.7 ``curobo.wrap.reacher.ik_solver``
-    API (IKSolver / IKSolverConfig / Pose / TensorDeviceType) was removed in
-    the v0.8.0 refactor.  This function is not on the active pan-grasp path;
-    use ``plan_to_grasp_poses`` / ``plan_grasp_motion`` (v0.8 MotionPlanner)
-    instead.  Raising here turns the otherwise-cryptic ``NameError`` (unbound
-    v0.7 symbols) into an honest, actionable signal.
-    """
-    raise RuntimeError(
-        "solve_ik is not supported on cuRobo v0.8; use PlanToGraspPoses / "
-        "PlanGraspMotion"
-    )
-
-
 # ---------------------------------------------------------------------------
 # v0.8 single-pose planner cache + helpers for plan_to_pose.
 #
@@ -3293,42 +3258,3 @@ class _CollisionAwareIKCache:
 _collision_aware_ik_cache = _CollisionAwareIKCache()
 
 
-def batch_grasp_feasibility(
-    world_config,
-    start_state: np.ndarray,
-    grasp_poses: list[tuple[np.ndarray, np.ndarray]],
-    *,
-    grasp_pose_is_fingertip: bool = True,
-    approach_offset_m: float = 0.10,
-    num_corridor_samples: int = 5,
-    robot_file: str = "franka.yml",
-    num_ik_seeds: int = 32,
-    position_threshold: float = 0.005,
-    rotation_threshold: float = 0.05,
-    collision_activation_distance: float = 0.01,
-    robot_collision_sphere_buffer: float | None = None,
-    ignore_obstacle_names: list[str] | None = None,
-    tensor_args=None,
-) -> tuple[list[bool], list[bool], list[bool], list[float]]:
-    """Per-pose scene-collision feasibility for a batch of grasp candidates.
-
-    Returns ``(feasible, grasp_ik_ok, approach_ik_ok, corridor_collision_fraction)``
-    each of length ``len(grasp_poses)``, aligned with input order.
-
-    feasible[i] is True iff IK solves at both the grasp and the pre-grasp
-    approach pose (offset by ``approach_offset_m`` along the grasp's local
-    -Z) WITHOUT world or self collision, AND a joint-space linear interp
-    between the two IK solutions has zero in-collision waypoints.
-
-    See ``proto/curobo/v1/curobo.proto`` BatchGraspFeasibility for the
-    semantic contract.
-    """
-    raise RuntimeError(
-        "batch_grasp_feasibility is not supported on cuRobo v0.8; use "
-        "PlanToGraspPoses / PlanGraspMotion"
-    )
-
-
-if __name__ == "__main__":
-    print("_curobo_impl is a library; call it through the curobo tool bundle.")
-    raise SystemExit(0)
