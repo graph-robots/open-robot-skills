@@ -1068,6 +1068,25 @@ class TestTransportingObjects:
         plan = ctx.calls_to("curobo.plan_directed_linear")[0].kwargs
         assert plan["distance"] == pytest.approx(0.353 - 0.04)
 
+    def test_transport_fallback_that_cannot_plan_raises(self, skills_registry):
+        transport = _script(skills_registry, "transporting-objects", "transport_descend_linear")
+        def refuse(pose):
+            raise RuntimeError("joint limit")
+
+        ctx = FakeContext(
+            {
+                "robot.go_to_pose_cartesian": refuse,
+                "motion.plan_to_pose": {
+                    "planned": False,
+                    "trajectory": {"waypoints": []},
+                    "reason": "no collision-free path to this pose was found",
+                },
+            }
+        )
+        with pytest.raises(RuntimeError, match="could not plan"):
+            transport._cartesian(ctx, 0.3, 0.0, 0.24, self.WRIST)
+        assert ctx.call_count("robot.execute_trajectory") == 0
+
     def test_transport_leg_that_stops_short_raises(self, skills_registry):
         transport = _script(skills_registry, "transporting-objects", "transport_descend_linear")
         # A wrist that never moves: every leg comes back >3 cm short, so the
@@ -1105,9 +1124,9 @@ class TestTransportingObjects:
                 raise RuntimeError("joint-limit basin")
             arm.cartesian(pose)
 
-        def _plan(target_pose, start_joint_position):
-            arm.target = target_pose
-            return {"success": True, "trajectory": _trajectory()}
+        def _plan(pose):
+            arm.target = pose
+            return {"planned": True, "trajectory": _trajectory(), "reason": ""}
 
         def _execute(trajectory, max_steps_per_waypoint=0):
             if arm.target is not None:
@@ -1117,16 +1136,18 @@ class TestTransportingObjects:
             arm,
             **{
                 "robot.go_to_pose_cartesian": _cartesian,
-                "curobo.plan_to_pose": _plan,
+                "motion.plan_to_pose": _plan,
                 "robot.execute_trajectory": _execute,
             },
         )
         out = transport.run(ctx, container_obb=self.CONTAINER, place_offset=-0.06)
-        # One planned reconfiguration to the same pose, then the leg counts
-        # as reached and the place proceeds at the container centre.
-        assert ctx.call_count("curobo.plan_to_pose") == 1
-        plan = ctx.calls_to("curobo.plan_to_pose")[0].kwargs
-        assert plan["target_pose"]["position"]["x"] == pytest.approx(0.5)
+        # One reconfiguration to the same pose, planned by the robot (which
+        # owns its base frame and arm model), then the leg counts as reached
+        # and the place proceeds at the container centre.
+        assert ctx.call_count("motion.plan_to_pose") == 1
+        assert ctx.call_count("curobo.plan_to_pose") == 0
+        plan = ctx.calls_to("motion.plan_to_pose")[0].kwargs
+        assert plan["pose"]["position"]["x"] == pytest.approx(0.5)
         assert out["place_position"]["x"] == pytest.approx(0.5)
         assert out["place_position"]["z"] == pytest.approx(0.16)
 

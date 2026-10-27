@@ -90,7 +90,10 @@ TRANSPORT_GRID = list(
         [(0.40, 0.10, 0.70), (0.55, -0.05, 0.62)],
         [(0.12, 0.20, 0.05), (0.25, 0.10, 0.08)],
         [(0.30, 0.00, 0.95), (0.70, -0.20, 0.78)],
-        [False, True],
+        # Only the unrefused path: a refused leg now plans through
+        # motion.plan_to_pose, which the promoted script did not have.
+        # test_skills_manipulation covers that fallback.
+        [False],
     )
 )
 

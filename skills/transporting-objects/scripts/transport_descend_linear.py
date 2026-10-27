@@ -136,24 +136,20 @@ def _cartesian(ctx: NodeContext, x: float, y: float, z: float, rotation: Quatern
         ctx.tool("robot.go_to_pose_cartesian", pose=pose)
     except Exception as exc:  # noqa: BLE001
         # A Cartesian servo can hit a joint-limit basin even when another arm
-        # configuration reaches the same clear-space pose. Use the reusable
-        # CuRobo single-pose planner for a genuine joint-space reconfiguration.
+        # configuration reaches the same clear-space pose. Plan the joint-space
+        # reconfiguration through the robot's own planner: it owns the arm model
+        # and base frame, which a raw curobo.plan_to_pose call would assume.
         logger.warning(
             "[transport_move] straight-line leg to (%.3f, %.3f, %.3f) failed "
-            "(%s); falling back to curobo.plan_to_pose.",
+            "(%s); falling back to motion.plan_to_pose.",
             x,
             y,
             z,
             exc,
         )
-        observation = ctx.tool("robot.get_observation")
-        plan = ctx.tool(
-            "curobo.plan_to_pose",
-            target_pose=pose,
-            start_joint_position=observation["arms"][0]["joint_state"],
-        )
-        if not plan.get("success") or not plan.get("trajectory"):
-            raise RuntimeError("CuRobo could not plan the clear-space transport leg") from exc
+        plan = ctx.tool("motion.plan_to_pose", pose=pose)
+        if not plan.get("planned") or not plan.get("trajectory"):
+            raise RuntimeError("The robot could not plan the clear-space transport leg") from exc
         ctx.tool(
             "robot.execute_trajectory", trajectory=plan["trajectory"], max_steps_per_waypoint=60
         )

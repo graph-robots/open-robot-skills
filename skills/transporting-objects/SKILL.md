@@ -17,7 +17,7 @@ license: Apache-2.0
 compatibility: requires gap>=0.1
 metadata: {category: motion, tags: [motion, transport, place, drop]}
 gap:
-  requires: {connector: [robot.describe_arm, robot.describe_gripper, robot.describe_workspace, robot.grasp_frame, robot.wait_steps]}
+  requires: {connector: [robot.describe_arm, robot.describe_gripper, robot.describe_workspace, robot.grasp_frame, robot.wait_steps, motion.plan_to_pose]}
   allowed_tools:
     - robot.go_to_pose
     - robot.go_to_pose_cartesian
@@ -32,6 +32,7 @@ gap:
     - robot.grasp_frame
     - robot.wait_steps
     - curobo.plan_to_pose
+    - motion.plan_to_pose
     - geometry.compute_drop_position
     - geometry.mask_to_world_points
     - geometry.filter_and_compute_obb
